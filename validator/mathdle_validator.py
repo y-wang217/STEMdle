@@ -211,6 +211,14 @@ def equivalent(a: Any, b: Any) -> bool:
         boolish = (sp.logic.boolalg.BooleanAtom, sp.core.relational.Relational, sp.And, sp.Or, sp.Not)
         if isinstance(a, boolish) or isinstance(b, boolish):
             return bool(a == b)
+        # Fast path: values that differ numerically by a clear margin are not equal,
+        # so skip the (potentially very slow) symbolic simplification.
+        try:
+            na, nb = complex(sp.N(a, 30)), complex(sp.N(b, 30))
+            if abs(na - nb) > 1e-9 * max(1.0, abs(na), abs(nb)):
+                return False
+        except Exception:
+            pass
         try:
             diff = sp.simplify(a - b)
             if diff == 0:
@@ -455,6 +463,9 @@ def validate_candidate(q: dict) -> dict:
                     "fail",
                     f"verification produced {len(truth)} candidate answers ({truth}); the question is ambiguous or a domain restriction is missing",
                 )
+                truth = None
+            elif getattr(truth, "free_symbols", None) and not any(getattr(v, "free_symbols", None) for v in values if v is not None):
+                add("independent_verification", "fail", f"verification still contains unknown symbols {sorted(map(str, truth.free_symbols))} (typo or unsolved variable?)")
                 truth = None
             else:
                 computed["verified_answer"] = sp.sstr(truth)

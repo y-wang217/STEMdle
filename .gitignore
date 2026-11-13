@@ -45,3 +45,4 @@ __pycache__/
 /playwright-report/
 /screenshots/tmp/
 /.next-e2e/
+/.next-build/

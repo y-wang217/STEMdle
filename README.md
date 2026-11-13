@@ -145,7 +145,7 @@ Categories are never shown to players.
 ### Providers
 
 * **`anthropic`** — Claude writes a batch against the active profile, with curated examples (ideal / too easy / too hard) retrieved from past judgments, recent statements to avoid, and over-used techniques flagged for diversity. Output is schema-constrained JSON.
-* **`procedural`** — a **development adapter**, clearly labelled everywhere it appears. 30+ hand-written parametrized templates (all eight slots) that emit the same contract, including misconception-derived distractors, SymPy verification and diagrams. It lets the whole loop run without credentials; its “learning” is a deterministic update of target difficulty and per-template weights.
+* **`procedural`** — a **development adapter**, clearly labelled everywhere it appears. 41 hand-written parametrized templates across all eight slots (8 arithmetic, 33 for slots 2–8) that emit the same contract, including misconception-derived distractors, SymPy verification and diagrams. It lets the whole loop run without credentials; its “learning” is a deterministic update of target difficulty and per-template weights.
 
 ### Candidate contract (`src/lib/schemas/question.ts`)
 
@@ -242,3 +242,11 @@ Test databases are reset; the scripts refuse to reset a URL without `test`/`e2e`
 * The `procedural` provider is a development adapter: useful for exercising the pipeline, not a substitute for AI-authored, editor-calibrated content.
 * Diagram labels are rendered as plain text (simple TeX symbols are mapped); full TeX labels inside diagrams are not supported.
 * Rate limiting is per fixed window in Postgres; adequate for abuse control, not DDoS protection.
+
+### Validator caveats worth knowing
+
+* SymPy `solveset` over an interval can silently drop solutions of trigonometric equations; the AI prompt forbids that route (solve the polynomial in `sin x`/`cos x` and build angles explicitly), and the procedural templates follow the same rule.
+* Very large radical expressions can make symbolic simplification slow; a numeric fast path rejects clearly different values first, and per-expression time limits apply.
+* The diagram checker verifies lengths, angles, right-angle marks, concyclicity and plotted functions, but not tangency or parallel marks.
+
+Screenshots of the player and admin interfaces are in [`screenshots/`](screenshots/).

@@ -116,6 +116,12 @@ class TestValidator(unittest.TestCase):
         self.assertEqual(r["status"], "failed")
         self.assertIn("fail", status_of(r, "expression_safety"))
 
+    def test_unknown_symbol_in_verification_fails(self):
+        q = base()
+        q["verification"]["expression"] = "Rational(3,4) + Rational(5,6) + typo"
+        r = validate_candidate(q)
+        self.assertEqual(r["status"], "failed")
+
     def test_enumeration_expression(self):
         self.assertEqual(safe_eval("sum([d for d in range(1, 13) if 12 % d == 0])"), 28)
         self.assertEqual(safe_eval("1/3"), safe_eval("Rational(1,3)"))

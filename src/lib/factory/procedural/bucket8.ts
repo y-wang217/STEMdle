@@ -199,7 +199,10 @@ export const reciprocalPairs: ProceduralTemplate = {
   range: [8.5, 10],
   generate(rng, difficulty) {
     const t = level(difficulty, 8.5, 10);
-    const n = rng.pick(t < 0.5 ? [6, 10, 12, 14, 15, 18, 20, 21] : [12, 18, 20, 24, 28, 30, 36, 40, 42, 45, 48, 60]);
+    // not prime powers (for those, τ(n) = (τ(n²) + 1)/2 and two traps coincide)
+    const n = rng.pick(
+      t < 0.5 ? [6, 10, 12, 14, 15, 18, 20, 21, 22, 26, 28, 33] : [12, 18, 20, 24, 28, 30, 36, 40, 42, 44, 45, 48, 50, 54, 56, 60, 63, 66, 70, 72],
+    );
     const integers = t > 0.55 && rng.bool(0.6);
     const T2 = tau(n * n);
     const T1 = tau(n);

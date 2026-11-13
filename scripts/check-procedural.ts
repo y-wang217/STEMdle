@@ -42,6 +42,11 @@ async function main() {
           }
         }
       }
+      if (!items.length) {
+        console.log(`✗ slot ${slot} ${tpl.id}: produced no samples (${retries} retries) — template always retries`);
+        failures++;
+        continue;
+      }
       const { results } = await runSympyValidator(items);
       const bad = results.filter((r) => r.status !== "passed");
       const warns = results.flatMap((r) => r.checks.filter((c) => c.status === "warn").map((c) => c.name));

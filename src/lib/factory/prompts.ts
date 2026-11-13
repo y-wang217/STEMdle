@@ -16,6 +16,8 @@ Machine-checkable fields (critical — questions failing these are discarded)
 - verification.checks: SymPy boolean expressions for domain restrictions/extraneous roots/uniqueness that must be True.
 - option.derivation (distractors only): SymPy expression that reproduces the trap value by following the mistaken path.
 - Allowed in expressions: SymPy functions (Rational, sqrt, sin, cos, tan, log, exp, solve, Sum, factorial, binomial, gcd, lcm, Abs, floor, ceiling, Min, Max, FiniteSet, Tuple, Interval, divisors, isprime, Mod, simplify, expand, factor, Eq...), symbols x y z t n k a b c m r theta, list comprehensions, range/sum/len/min/max/all/any. No imports, no attribute access except .subs/.evalf/.doit/.args/.lhs/.rhs, no underscores.
+- Do NOT verify trigonometric equations with solveset over an interval (it can silently drop solutions). Instead solve the polynomial in s = sin x (or cos x), keep roots with |s| <= 1, and build each angle explicitly with asin/acos and the quadrant rules.
+- Prefer exact computation over floating point; avoid nroots/N in verification unless followed by nsimplify with a check.
 - precision_dp: null unless the answer is a rounded decimal (avoid).
 - If and only if no SymPy check is possible, set verification.kind = "manual" (the question will need human mathematical review — avoid).
 
