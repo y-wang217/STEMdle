@@ -193,7 +193,7 @@ export default async function BucketPage({ params }: { params: Promise<{ slot: s
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                {["Date", "Question", "Reached", "Answered", "Solve rate", "Median time", "Answer distribution"].map((h) => (
+                {["Date", "Question", "Reached", "Answered", "Solve rate", "Median time", "Answer distribution", "Weak distractors"].map((h) => (
                   <th key={h} className={th}>
                     {h}
                   </th>
@@ -220,6 +220,11 @@ export default async function BucketPage({ params }: { params: Promise<{ slot: s
                         </span>
                       ))}
                   </td>
+                  <td className={td}>
+                    {p.answered >= 20
+                      ? ["A", "B", "C", "D"].filter((l) => l !== p.correct_label && (p.option_counts[l] ?? 0) / p.answered < 0.05).join(", ") || "none"
+                      : "needs ≥20 answers"}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -228,7 +233,7 @@ export default async function BucketPage({ params }: { params: Promise<{ slot: s
       </Card>
 
       <Card title={`Active profile (v${bucket.version})`}>
-        <ProfileEditor slot={slot} profile={bucket.profile} />
+        <ProfileEditor key={bucket.version} slot={slot} profile={bucket.profile} />
       </Card>
     </div>
   );

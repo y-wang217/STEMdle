@@ -101,16 +101,27 @@ export async function validateVersions(versionIds: string[], provider?: Generato
   } catch (e) {
     pyError = (e as Error).message;
   }
-  const outcomes: ValidationOutcome[] = [];
+  // Phase 1: deterministic checks.
+  const staged = [];
   for (const q of qs) {
     const checks: ValidationCheck[] = [...structuralChecks(q)];
     const pr = py?.results.find((r) => r.id === q.version_id);
     if (pr) checks.push(...pr.checks);
     else checks.push({ name: "sympy", status: "fail", detail: `validator unavailable: ${pyError ?? "no result"}` });
     checks.push(...(await duplicateChecks(q)));
-    const preliminaryFail = checks.some((c) => c.status === "fail");
-    if (!preliminaryFail && provider) checks.push(...(await reasoningCheck(q, provider)));
-
+    staged.push({ q, pr, checks });
+  }
+  // Phase 2: AI reasoning checks, a few at a time (only for questions still in contention).
+  if (provider) {
+    const queue = staged.filter((s) => !s.checks.some((c) => c.status === "fail"));
+    const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
+      for (let s = queue.shift(); s; s = queue.shift()) s.checks.push(...(await reasoningCheck(s.q, provider)));
+    });
+    await Promise.all(workers);
+  }
+  // Phase 3: persist immutable reports and derive statuses.
+  const outcomes: ValidationOutcome[] = [];
+  for (const { q, pr, checks } of staged) {
     let status: ValidationStatus;
     if (checks.some((c) => c.status === "fail")) status = "failed";
     else if (
