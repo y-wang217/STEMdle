@@ -465,9 +465,9 @@ export const trigMax: ProceduralTemplate = {
     const ak = outside ? rng.int(4 * m + 1, 4 * m + 4) : rng.int(1, 4 * m - 1);
     const k = rng.bool() ? ak : -ak;
     const sg = Math.sign(k);
-    let C: Q, D1: Q, D2: Q, D3: Q;
+    let C: Q, D2: Q, D3: Q;
     const vertexVal: Q = reduce(8 * m * m + k * k, 8 * m); // m + k²/(8m)
-    D1 = [m + ak, 1];
+    const D1: Q = [m + ak, 1];
     const wrongIdMax: Q = ak <= 2 * m ? reduce(4 * m * m + k * k, 4 * m) : [ak, 1];
     let mis2: [string, string, string];
     let mis3: [string, string, string];
