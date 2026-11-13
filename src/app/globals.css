@@ -1,0 +1,156 @@
+@import "tailwindcss";
+
+/*
+ * Mathdle visual identity: warm graph paper, ink navy, one vermilion accent.
+ * Display type is Fraunces (serif); UI is Inter; math is KaTeX.
+ */
+:root {
+  --paper: #f4efe4;
+  --paper-2: #ebe4d4;
+  --card: #fffdf8;
+  --ink: #1a1f2b;
+  --ink-2: #4a5163;
+  --muted: #7b8091;
+  --rule: #d9d0bd;
+  --grid: rgba(26, 31, 43, 0.045);
+  --accent: #d9481f;
+  --accent-ink: #ffffff;
+  --good: #23855a;
+  --good-soft: #d9efe3;
+  --bad: #c2362b;
+  --bad-soft: #f6dcd8;
+  --skip: #a9a08c;
+  --none: #d6cfbf;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #13161d;
+    --paper-2: #1a1e27;
+    --card: #1d222c;
+    --ink: #ece6d8;
+    --ink-2: #b9b3a5;
+    --muted: #8a8778;
+    --rule: #2e3441;
+    --grid: rgba(236, 230, 216, 0.035);
+    --accent: #f06a3d;
+    --accent-ink: #13161d;
+    --good: #45b07e;
+    --good-soft: #1b3328;
+    --bad: #e2574a;
+    --bad-soft: #3a1f1c;
+    --skip: #6f6a5c;
+    --none: #2d3240;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-rule: var(--rule);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-skip: var(--skip);
+  --color-none: var(--none);
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces Variable", ui-serif, Georgia, serif;
+}
+
+html {
+  background: var(--paper);
+}
+
+body {
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 22px 22px;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+}
+
+/* Math sizing inside answer cards and prose */
+.katex {
+  font-size: 1.08em;
+}
+.katex-display {
+  margin: 0.6em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+.prose-math p + p {
+  margin-top: 0.6em;
+}
+
+/* Admin: dense, functional */
+.admin {
+  background: #f7f7f5;
+  color: #16181d;
+}
+@media (prefers-color-scheme: dark) {
+  .admin {
+    background: #121418;
+    color: #e5e5e5;
+  }
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.animate-pop {
+  animation: pop 260ms ease-out;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-rise {
+  animation: rise 220ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop,
+  .animate-rise {
+    animation: none;
+  }
+}
+
+/* JSXGraph: keep diagrams static and theme-aware */
+.jxgbox {
+  border: none !important;
+  border-radius: 12px;
+  background: transparent !important;
+  touch-action: pan-y !important;
+}
+.jxgbox .JXGtext {
+  font-family: var(--font-sans);
+}
