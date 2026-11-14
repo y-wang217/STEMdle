@@ -1,10 +1,15 @@
 """Vercel Python function: GET /api/health."""
+import json
 from http.server import BaseHTTPRequestHandler
 
-from _common import send  # noqa: E402
-import sympy  # noqa: E402
+import sympy
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        send(self, 200, {"ok": True, "engine": f"sympy-{sympy.__version__}"})
+        body = json.dumps({"ok": True, "engine": f"sympy-{sympy.__version__}"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
