@@ -151,6 +151,14 @@ def _namespace() -> dict[str, Any]:
 
 @contextmanager
 def time_limit(seconds: int):
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        # Signals only work on the main thread (some serverless runtimes use
+        # worker threads); the platform's function timeout is the backstop.
+        yield
+        return
+
     def handler(signum, frame):
         raise EvalTimeout(f"evaluation exceeded {seconds}s")
 
