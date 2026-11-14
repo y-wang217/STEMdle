@@ -227,6 +227,19 @@ Test databases are reset; the scripts refuse to reset a URL without `test`/`e2e`
 
 ---
 
+### Current production setup
+
+| Piece | Where |
+|---|---|
+| Player game + admin | Vercel project `mathdle` → https://mathdle-ten.vercel.app (admin at `/admin`) |
+| SymPy validator | Vercel project `mathdle-validator` (Python functions in `validator/api/`, root directory `validator`) → https://mathdle-validator.vercel.app/api |
+| Database | Supabase project `Mathdle` (`nsgadwlgzeawyljxmuxo`, ca-central-1), migrations 0001–0003 applied |
+| App DB role | `mathdle_app` (login, BYPASSRLS, DML only — not the Supabase master role), via the `aws-1-ca-central-1` transaction pooler |
+| Deployment protection | Vercel Authentication on **preview** deployments only; production domains are public |
+| Production branch | the repository default branch (pushes deploy automatically) |
+
+Secrets (`DATABASE_URL`, `APP_SECRET`, `CRON_SECRET`, `VALIDATOR_TOKEN`) are stored as *sensitive* Vercel environment variables. To rotate the DB password: `alter role mathdle_app password '...'` in the Supabase SQL editor, then update `DATABASE_URL` in Vercel and redeploy.
+
 ## Operations runbook
 
 * **Missing challenge alert** — compose and approve today’s set in `/admin/composer/<date>`, then “Run daily job now” on the dashboard (or just load `/`).
