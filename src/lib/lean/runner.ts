@@ -98,14 +98,29 @@ export const localRunner: LeanRunner = {
   },
 };
 
+/** Active snapshot: the DB setting (updated by the refresh endpoint) wins over the env var. */
+export async function currentSnapshotId(): Promise<string | null> {
+  try {
+    const { sql } = await import("@/lib/db");
+    const [row] = await sql<{ value: string }[]>`select value #>> '{}' as value from app_settings where key = 'lean_sandbox_snapshot_id'`;
+    if (row?.value) return row.value;
+  } catch {
+    /* settings table unavailable: fall back to env */
+  }
+  return process.env.LEAN_SANDBOX_SNAPSHOT_ID || null;
+}
+
+export const sandboxRegion = () => (process.env.LEAN_SANDBOX_REGION || "yul1") as "yul1";
+
 export const sandboxRunner: LeanRunner = {
   id: "vercel-sandbox",
   async run(source) {
     const t0 = Date.now();
-    const snapshotId = process.env.LEAN_SANDBOX_SNAPSHOT_ID;
-    if (!snapshotId) throw new Error("LEAN_SANDBOX_SNAPSHOT_ID is not configured");
+    const snapshotId = await currentSnapshotId();
+    if (!snapshotId) throw new Error("no Lean sandbox snapshot configured (LEAN_SANDBOX_SNAPSHOT_ID)");
     const { Sandbox } = await import("@vercel/sandbox");
     const sandbox = await Sandbox.create({
+      region: sandboxRegion(),
       source: { type: "snapshot", snapshotId },
       networkPolicy: "deny-all",
       resources: { vcpus: Number(process.env.LEAN_SANDBOX_VCPUS ?? 4) },
@@ -116,10 +131,11 @@ export const sandboxRunner: LeanRunner = {
     const isolation = ["Vercel Sandbox microVM", "network deny-all", "no credentials or app env", "fresh VM per check"];
     try {
       await sandbox.writeFiles([{ path: "/tmp/mathdle/Check.lean", content: source }]);
-      const project = process.env.LEAN_SANDBOX_PROJECT_DIR ?? "/vercel/sandbox/lean";
+      const project = process.env.LEAN_SANDBOX_PROJECT_DIR ?? "/vercel/lean";
+      const toolchain = process.env.LEAN_SANDBOX_TOOLCHAIN_DIR ?? "/vercel/lean-toolchain";
       const res = await sandbox.runCommand({
         cmd: "bash",
-        args: ["-lc", `export PATH=/vercel/sandbox/lean-toolchain/bin:$PATH; cd ${project} && timeout ${Math.floor(LEAN_CHECK_TIMEOUT_MS / 1000)} lake env lean --json /tmp/mathdle/Check.lean`],
+        args: ["-lc", `export PATH=${toolchain}/bin:$PATH; cd ${project} && timeout ${Math.floor(LEAN_CHECK_TIMEOUT_MS / 1000)} lake env lean --json /tmp/mathdle/Check.lean`],
         env: {},
       });
       const [stdout, stderr] = await Promise.all([res.stdout(), res.stderr()]);
@@ -133,7 +149,7 @@ export const sandboxRunner: LeanRunner = {
 export function leanRunnerFromEnv(): LeanRunner | null {
   const mode = process.env.LEAN_RUNNER ?? (process.env.LEAN_SANDBOX_SNAPSHOT_ID ? "vercel-sandbox" : "local");
   if (mode === "disabled") return null;
-  if (mode === "vercel-sandbox") return process.env.LEAN_SANDBOX_SNAPSHOT_ID ? sandboxRunner : null;
+  if (mode === "vercel-sandbox") return sandboxRunner;
   // local: only if a Lean project with Mathlib is present
   const dir = leanProjectDir();
   if (!fs.existsSync(path.join(dir, ".lake", "packages", "mathlib"))) return null;
