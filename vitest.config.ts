@@ -11,7 +11,7 @@ export default defineConfig({
     environment: "node",
     globalSetup: ["tests/global-setup.ts"],
     fileParallelism: false,
-    testTimeout: 60_000,
+    testTimeout: 300_000,
     hookTimeout: 120_000,
     env: {
       DATABASE_URL: testDb,
@@ -21,6 +21,10 @@ export default defineConfig({
       GENERATOR_PROVIDER: "procedural",
       ANTHROPIC_API_KEY: "",
       VALIDATOR_URL: "",
+      // Real Lean 4 + Mathlib (local runner); the Lean suite is skipped if absent.
+      LEAN_RUNNER: process.env.LEAN_RUNNER ?? "local",
+      LEAN_PROJECT_DIR: process.env.LEAN_PROJECT_DIR ?? path.resolve(__dirname, "lean"),
+      LEAN_BIN_DIR: process.env.LEAN_BIN_DIR ?? "",
     },
   },
 });

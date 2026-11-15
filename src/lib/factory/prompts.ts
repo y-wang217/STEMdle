@@ -72,6 +72,12 @@ export function generatorUserPrompt(req: GenerationRequest): string {
     .slice(0, 5)
     .filter(([, n]) => n >= 3);
   if (over.length) sections.push(`Over-used techniques recently (use sparingly): ${over.map(([t, n]) => `${t} (${n})`).join(", ")}`);
+  if (req.formalFailures?.length)
+    sections.push(
+      `Mathematical errors recently caught by formal (Lean) verification in this slot — avoid repeating them. This is about correctness only, not difficulty:\n${req.formalFailures
+        .map((s) => `- ${s}`)
+        .join("\n")}`,
+    );
   sections.push(`Every question in this batch must use a different idea. Return exactly ${req.count} questions.`);
   return sections.join("\n\n");
 }

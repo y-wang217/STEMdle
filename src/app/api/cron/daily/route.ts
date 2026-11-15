@@ -6,12 +6,16 @@
 import { HttpError, json, route } from "@/lib/http";
 import { safeEqual } from "@/lib/security/crypto";
 import { dailyJob } from "@/lib/composer";
+import { processLeanQueue } from "@/lib/lean/pipeline";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 export const GET = route(async (req: Request) => {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization") ?? "";
   if (!secret || !safeEqual(auth, `Bearer ${secret}`)) throw new HttpError(401, "unauthorized");
-  return json(await dailyJob());
+  const daily = await dailyJob();
+  const lean = await processLeanQueue({ deadlineMs: 200_000 }).catch((e) => ({ error: (e as Error).message }));
+  return json({ ...daily, lean });
 });

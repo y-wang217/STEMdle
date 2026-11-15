@@ -1,6 +1,9 @@
 import { sql } from "@/lib/db";
 import { loadQuestions } from "@/lib/factory/store";
 import { ReviewApp, type ReviewItem } from "@/components/admin/ReviewApp";
+import { after } from "next/server";
+import { leanViews } from "@/lib/lean/view";
+import { processLeanQueue } from "@/lib/lean/pipeline";
 
 export default async function ReviewPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
@@ -25,6 +28,8 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         left join lateral (select status, checks from question_validations where question_version_id = q.current_version_id order by created_at desc limit 1) v on true
         where q.id = any(${qs.map((q) => q.id)}::uuid[])`
     : [];
+  const lean = await leanViews(qs.map((q) => q.version_id));
+  if ([...lean.values()].some((l) => l?.status === "pending")) after(() => processLeanQueue().catch(() => {}));
   const items: ReviewItem[] = qs.map((q) => {
     const e = extra.find((x) => x.id === q.id)!;
     return {
@@ -44,6 +49,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       warnings: e.warnings ?? [],
       judgment: e.judgment === "retracted" ? null : (e.judgment as ReviewItem["judgment"]),
       math_verified: Boolean(q.math_verified_at),
+      lean: lean.get(q.version_id) ?? null,
     };
   });
   return <ReviewApp items={items} filter={{ slot, batch, all: includeReviewed }} />;

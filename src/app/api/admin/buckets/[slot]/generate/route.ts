@@ -3,6 +3,8 @@ import { HttpError, json, readJson } from "@/lib/http";
 import { adminRoute } from "@/lib/admin/route";
 import { runGenerationBatch } from "@/lib/factory/pipeline";
 import { availableProviders } from "@/lib/factory/providers";
+import { after } from "next/server";
+import { processLeanQueue } from "@/lib/lean/pipeline";
 
 export const maxDuration = 300;
 
@@ -13,5 +15,6 @@ export const POST = adminRoute<{ slot: string }>(async (req, admin, { slot }) =>
   const p = availableProviders().find((x) => x.id === body.provider)!;
   if (!p.available) throw new HttpError(400, `${body.provider} is unavailable: ${p.reason}`);
   const summary = await runGenerationBatch({ slot: Number(slot), count: body.count, providerId: body.provider, adminId: admin.id });
+  after(() => processLeanQueue().catch((e) => console.error("[mathdle] lean queue", e)));
   return json(summary);
 });

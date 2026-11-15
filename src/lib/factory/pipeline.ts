@@ -12,6 +12,7 @@ import { getProvider, type ProviderId } from "./providers";
 import type { ExampleQuestion } from "./providers/types";
 import { insertQuestion } from "./store";
 import { exactKey } from "./fingerprint";
+import { enqueueLean, recentFormalFailures } from "@/lib/lean/pipeline";
 import { validateVersions } from "./validate";
 
 export interface BatchSummary {
@@ -88,6 +89,7 @@ export async function runGenerationBatch(args: {
       examples,
       recentStatements: recent.map((r) => r.statement),
       techniqueCounts,
+      formalFailures: await recentFormalFailures(args.slot).catch(() => []),
     });
 
     const discarded: { reason: string }[] = [];
@@ -123,6 +125,10 @@ export async function runGenerationBatch(args: {
     }
 
     const outcomes = await validateVersions(versionIds, provider);
+    // Formal verification runs asynchronously; it never blocks or fails the batch.
+    await enqueueLean(outcomes.filter((o) => o.status !== "failed").map((o) => o.versionId)).catch((e) =>
+      console.error("[mathdle] could not enqueue Lean jobs", e),
+    );
     await sql`update generation_batches set status = 'completed', produced_count = ${versionIds.length},
               usage = ${sql.json({ ...(usage ?? {}), discarded } as never)}, completed_at = now() where id = ${batch.id}`;
     if (args.adminId)

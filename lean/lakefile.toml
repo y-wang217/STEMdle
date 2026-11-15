@@ -1,0 +1,10 @@
+# Pinned verification environment for Mathdle's Lean checks.
+# Upgrading Lean or Mathlib changes LEAN_ENV_VERSION, which invalidates the proof cache.
+name = "mathdle_verify"
+version = "0.1.0"
+defaultTargets = []
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4.git"
+rev = "v4.35.0"

@@ -5,6 +5,8 @@ import { feedbackHistory } from "@/lib/factory/feedback";
 import { Card, StatusChip, td, th } from "@/components/admin/ui";
 import { ActionButton } from "@/components/admin/kit";
 import { VerifyForm } from "@/components/admin/VerifyForm";
+import { LeanDetails } from "@/components/admin/LeanPanel";
+import { leanViews } from "@/lib/lean/view";
 import { Tex } from "@/components/Tex";
 import { Diagram } from "@/components/Diagram";
 
@@ -21,6 +23,7 @@ export default async function QuestionDetail({ params }: { params: Promise<{ id:
       select d.challenge_date::text, cq.slot, d.status, cq.voided_at from challenge_questions cq join daily_challenges d on d.id = cq.challenge_id where cq.question_id = ${id}`,
   ]);
   const latest = validations[0];
+  const lean = (await leanViews([q.version_id])).get(q.version_id) ?? null;
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <div>
@@ -110,6 +113,9 @@ export default async function QuestionDetail({ params }: { params: Promise<{ id:
             <p>Not validated.</p>
           )}
           {validations.length > 1 && <p className="mt-1 text-xs text-neutral-500">{validations.length - 1} earlier validation run(s) kept immutably.</p>}
+        </Card>
+        <Card title="Formal verification (Lean 4 + Mathlib) — separate from SymPy">
+          <LeanDetails lean={lean} questionId={id} />
         </Card>
         {(q.status === "needs_review" || (latest?.status === "needs_review" && !q.math_verified_at)) && (
           <Card title="Explicit mathematical review">

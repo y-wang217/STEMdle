@@ -36,7 +36,7 @@ function getClient(): Anthropic {
   return client;
 }
 
-async function structured<T extends z.ZodType>(opts: {
+export async function structured<T extends z.ZodType>(opts: {
   model: string;
   system: string;
   user: string;

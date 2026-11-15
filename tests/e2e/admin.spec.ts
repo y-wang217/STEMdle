@@ -30,6 +30,13 @@ test("keyboard calibration: ↑ ↓ X Esc Enter ← U behave exactly as specifie
   const feedbackRows = async () => (await db`select question_id, judgment from question_feedback order by created_at`) as unknown as { question_id: string; judgment: string }[];
   const before = (await feedbackRows()).length;
 
+  // Lean indicator is present and its panel toggles without affecting judgments.
+  await expect(page.getByTestId("lean-chip")).toBeVisible();
+  await page.keyboard.press("l");
+  await expect(page.getByTestId("lean-details")).toBeVisible();
+  await page.keyboard.press("l");
+  await expect(page.getByTestId("lean-details")).toHaveCount(0);
+
   // Up = too hard, Esc clears, Down = too easy — nothing saved yet.
   await page.keyboard.press("ArrowUp");
   await expect(pending).toContainText("Too hard");

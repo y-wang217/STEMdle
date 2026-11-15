@@ -23,6 +23,8 @@ export interface GenerationRequest {
   recentStatements: string[];
   /** Technique frequency among recent questions (diversity pressure). */
   techniqueCounts: Record<string, number>;
+  /** Recent formal-verification failures in this slot (mathematical errors, NOT difficulty feedback). */
+  formalFailures?: string[];
 }
 
 export interface GeneratedItem {

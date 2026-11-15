@@ -11,6 +11,7 @@ import { Tex } from "@/components/Tex";
 import { Diagram } from "@/components/Diagram";
 import type { DiagramSpecT } from "@/lib/schemas/question";
 import { post } from "./kit";
+import { LeanChip, LeanDetails, type LeanView } from "./LeanPanel";
 
 type J = "too_easy" | "just_right" | "too_hard" | "invalid";
 
@@ -31,6 +32,7 @@ export interface ReviewItem {
   warnings: string[];
   judgment: J | null;
   math_verified: boolean;
+  lean: LeanView | null;
 }
 
 const LABEL: Record<J, string> = { too_easy: "▼ Too easy", just_right: "● Just right", too_hard: "▲ Too hard", invalid: "✕ Invalid" };
@@ -57,6 +59,7 @@ export function ReviewApp({ items: initial, filter }: { items: ReviewItem[]; fil
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<{ id: string; judgment: J; idx: number; at: string }[]>([]);
   const noteRef = useRef<HTMLTextAreaElement>(null);
+  const [leanOpen, setLeanOpen] = useState(false);
   const done = idx >= items.length;
   const item = items[idx];
 
@@ -153,6 +156,10 @@ export function ReviewApp({ items: initial, filter }: { items: ReviewItem[]; fil
         case "U":
           void undo();
           break;
+        case "l":
+        case "L":
+          setLeanOpen((o) => !o);
+          break;
         case "n":
         case "N":
           e.preventDefault();
@@ -211,6 +218,7 @@ export function ReviewApp({ items: initial, filter }: { items: ReviewItem[]; fil
               <span>validation: {item.validation ?? "—"}</span>
               <span>source: {item.source}{item.template_id ? ` (${item.template_id})` : ""}</span>
               <span>est. difficulty {item.estimated_difficulty?.toFixed(1)}</span>
+              <LeanChip lean={item.lean} onClick={() => setLeanOpen((o) => !o)} />
               <a className="underline" href={`/admin/questions/${item.id}`} target="_blank">
                 details
               </a>
@@ -238,6 +246,11 @@ export function ReviewApp({ items: initial, filter }: { items: ReviewItem[]; fil
               <div className="mt-2 text-xs font-semibold uppercase text-neutral-500">Solution</div>
               <Tex as="div" className="leading-relaxed">{item.solution}</Tex>
             </div>
+            {leanOpen && (
+              <div className="mt-3 rounded border border-neutral-200 p-3 dark:border-neutral-700">
+                <LeanDetails lean={item.lean} questionId={item.id} />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -278,6 +291,7 @@ export function ReviewApp({ items: initial, filter }: { items: ReviewItem[]; fil
             <dt className="font-mono">←</dt><dd>previous</dd>
             <dt className="font-mono">U</dt><dd>undo last save</dd>
             <dt className="font-mono">N</dt><dd>write a note</dd>
+            <dt className="font-mono">L</dt><dd>show/hide Lean verification</dd>
           </dl>
         </div>
         <div className="rounded-lg border border-neutral-300 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">

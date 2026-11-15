@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/*.py": { "maxDuration": 120, "includeFiles": "mathdle_validator.py" }
+    "api/*.py": { "maxDuration": 120, "includeFiles": "{mathdle_validator.py,lean_export.py}" }
   }
 }

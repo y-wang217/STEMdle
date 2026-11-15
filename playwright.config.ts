@@ -30,6 +30,7 @@ export default defineConfig({
       MATHDLE_DISABLE_RATE_LIMITS: "1",
       NEXT_PUBLIC_SITE_URL: "https://mathdle.example",
       NEXT_DIST_DIR: ".next-e2e",
+      LEAN_RUNNER: "disabled",
     },
   },
 });
