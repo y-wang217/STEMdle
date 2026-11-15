@@ -1,4 +1,8 @@
+import { z } from "zod";
+import { DiagramSpec } from "@/lib/schemas/question";
 import type { ExampleQuestion, GenerationRequest, LearningInput } from "./providers/types";
+
+const DIAGRAM_FORMAT = JSON.stringify(z.toJSONSchema(DiagramSpec));
 
 export const GENERATOR_SYSTEM = `You are the question writer for Mathdle, a daily mathematics game. Every day players face eight multiple-choice questions of rising difficulty; one wrong answer ends the run. You write candidates for ONE slot at a time. Your questions are machine-checked by SymPy and then calibrated by a human editor.
 
@@ -23,6 +27,9 @@ Machine-checkable fields (critical — questions failing these are discarded)
 
 Diagrams
 - Only when they genuinely help. Use the structured spec (points with coordinates, segments, polygons, circles, angles, function graphs). Coordinates must be an accurate construction; labelled lengths (segment.length) and angles (angle.measure_deg) are verified against coordinates. Set essential=true only if the text alone is insufficient — prefer self-contained text. Always give alt_text.
+
+Diagram format: put the diagram in diagram_json as a JSON string (or null for no diagram). It must validate against this JSON Schema:
+${DIAGRAM_FORMAT}
 
 Output: JSON matching the schema exactly. template_id must be null.`;
 

@@ -6,7 +6,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
-import { CandidateBatch } from "@/lib/schemas/question";
+import { WireBatch, fromWire } from "@/lib/schemas/question";
+import type { CandidateQuestionT } from "@/lib/schemas/question";
 import { BLIND_SOLVER_SYSTEM, GENERATOR_SYSTEM, LEARNING_SYSTEM, generatorUserPrompt, learningUserPrompt } from "../prompts";
 import type { BlindSolveResult, GenerationRequest, GeneratorProvider, LearningInput, ProfileProposal } from "./types";
 
@@ -78,12 +79,16 @@ export function anthropicProvider(modelOverride?: string | null): GeneratorProvi
         model,
         system: GENERATOR_SYSTEM,
         user: generatorUserPrompt(req),
-        schema: CandidateBatch,
+        schema: WireBatch,
         effort: "high",
         maxTokens: 64000,
       });
       return {
-        items: data.questions.map((candidate) => ({ candidate: { ...candidate, template_id: null }, meta: { served_model: served } })),
+        // Shape is re-validated (including the diagram) by CandidateQuestion in the pipeline.
+        items: data.questions.map((w) => ({
+          candidate: { ...(fromWire(w) as CandidateQuestionT), template_id: null },
+          meta: { served_model: served },
+        })),
         usage,
       };
     },

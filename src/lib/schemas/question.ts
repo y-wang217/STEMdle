@@ -156,3 +156,32 @@ export type CandidateQuestionT = z.infer<typeof CandidateQuestion>;
 export const CandidateBatch = z.object({
   questions: z.array(CandidateQuestion),
 });
+
+/**
+ * Wire format for AI generation. Structured outputs compile the schema into a
+ * grammar, and the nine-way diagram union makes it too large, so the diagram
+ * travels as a JSON string (format described in the prompt) and is validated
+ * against DiagramSpec after parsing.
+ */
+export const WireCandidate = CandidateQuestion.omit({ diagram: true }).extend({
+  diagram_json: z
+    .string()
+    .nullable()
+    .describe("null, or a JSON-encoded diagram object exactly matching the diagram format in the instructions"),
+});
+export const WireBatch = z.object({ questions: z.array(WireCandidate) });
+export type WireCandidateT = z.infer<typeof WireCandidate>;
+
+/** Convert a wire candidate to the candidate contract. An unparseable diagram is kept as-is so schema validation rejects it with a reason. */
+export function fromWire(w: WireCandidateT): unknown {
+  const { diagram_json, ...rest } = w;
+  let diagram: unknown = null;
+  if (diagram_json && diagram_json.trim() && diagram_json.trim() !== "null") {
+    try {
+      diagram = JSON.parse(diagram_json);
+    } catch {
+      diagram = { invalid_json: diagram_json.slice(0, 200) };
+    }
+  }
+  return { ...rest, diagram };
+}
