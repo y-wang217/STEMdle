@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminPage } from "@/lib/admin/auth";
 import { LogoutButton } from "@/components/admin/LogoutButton";
+import { ActivityIndicator } from "@/components/admin/ActivityIndicator";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             {label}
           </Link>
         ))}
-        <span className="ml-auto text-neutral-500">{admin.email}</span>
+        <span className="ml-auto" />
+        <ActivityIndicator />
+        <span className="text-neutral-500">{admin.email}</span>
         <LogoutButton />
       </nav>
       <div className="mx-auto max-w-7xl p-4">{children}</div>

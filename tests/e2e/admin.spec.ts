@@ -114,3 +114,24 @@ test("compose, preview and audit pages render (acceptance 17)", async ({ page })
   await page.goto("/admin/audit");
   await expect(page.getByTestId("audit")).toContainText("approve_challenge");
 });
+
+test("generation runs in the background with live progress, a nav indicator and a ready notice", async ({ page }) => {
+  await login(page);
+  await page.goto("/admin/buckets/2");
+  await page.getByTestId("gen-count").fill("2");
+  await page.getByTestId("gen-provider").selectOption("procedural");
+  await page.getByTestId("generate").click();
+  // The request returns at once; progress is shown while the server keeps working.
+  await expect(page.getByTestId("batch-progress")).toBeVisible({ timeout: 10_000 });
+  // Leaving the page doesn't stop the batch: the nav indicator follows it and announces completion.
+  await page.getByRole("link", { name: "Questions", exact: true }).click();
+  await page.waitForURL("**/admin/questions");
+  const toast = page.getByTestId("activity-toast");
+  await expect(toast).toContainText("batch is ready", { timeout: 90_000 });
+  await toast.getByRole("link", { name: "Review this batch →" }).click();
+  await page.waitForURL(/\/admin\/review\?slot=2&batch=/);
+  await page.goto("/admin/buckets/2");
+  await expect(page.getByTestId("batch-summary")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("review-batch-link")).toHaveAttribute("href", /batch=/);
+  await page.screenshot({ path: "screenshots/tmp/admin-async-batch.png" });
+});

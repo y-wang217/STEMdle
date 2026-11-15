@@ -1,18 +1,55 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { post } from "./kit";
+import { STAGES, elapsed, requestActivityRefresh, stageLabel, useActivity, useNow, type BatchActivity } from "./activity";
 
-interface BatchSummary {
-  batchId: string;
-  provider: string;
-  devAdapter: boolean;
-  generatorVersion: number;
-  produced: number;
-  passed: number;
-  failed: number;
-  needsReview: number;
-  discarded: { reason: string }[];
+/** Live progress for this slot's newest batch (running, or finished in the last 15 minutes). */
+function BatchProgress({ batch, skewMs }: { batch: BatchActivity; skewMs: number }) {
+  const running = batch.status === "running";
+  const now = useNow(running) + skewMs;
+  const idx = batch.status === "failed" ? -1 : STAGES.findIndex((x) => x.key === batch.stage);
+  const s = batch.summary;
+  return (
+    <div className="mt-3 rounded-md border border-neutral-200 p-3 dark:border-neutral-800" data-testid="batch-progress" data-status={batch.status}>
+      <div className="flex flex-wrap items-center gap-1">
+        {STAGES.map((st, i) => {
+          const done = batch.status === "completed" || i < idx;
+          const current = running && i === idx;
+          return (
+            <span key={st.key} className="flex items-center gap-1">
+              <span
+                className={`rounded-full px-2 py-0.5 text-[12px] ${
+                  done ? "bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-200" : current ? "bg-blue-100 font-semibold text-blue-900 dark:bg-blue-950 dark:text-blue-200" : "bg-neutral-100 text-neutral-500 dark:bg-neutral-800"
+                }`}
+              >
+                {done ? "✓ " : current ? "● " : ""}
+                {st.label}
+              </span>
+              {i < STAGES.length - 1 && <span className="text-neutral-400">→</span>}
+            </span>
+          );
+        })}
+        <span className="ml-auto tabular-nums text-neutral-500">{elapsed(batch.createdAt, batch.completedAt ? Date.parse(batch.completedAt) : now)}</span>
+      </div>
+      {running && (
+        <p className="mt-2 text-neutral-600 dark:text-neutral-400">
+          {stageLabel(batch)}… a batch of {batch.requested} usually takes 1–3 minutes. You can leave this page — progress stays in the top bar and you&apos;ll get a notice when it&apos;s ready.
+        </p>
+      )}
+      {batch.status === "failed" && <p className="mt-2 text-red-600">Batch failed: {batch.error}</p>}
+      {batch.status === "completed" && s && (
+        <p className="mt-2" data-testid="batch-summary">
+          Batch with generator v{s.generatorVersion} via {s.provider}
+          {s.devAdapter ? " (development adapter)" : ""}: {s.produced} produced — {s.passed} validated, {s.needsReview} need math review, {s.failed} failed validation
+          {s.discarded.length ? `, ${s.discarded.length} discarded (schema)` : ""}. Lean checks continue in the background.{" "}
+          <a className="font-semibold underline" href={`/admin/review?slot=${batch.slot}&batch=${batch.id}`} data-testid="review-batch-link">
+            Review this batch →
+          </a>
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function BucketControls({
@@ -33,21 +70,25 @@ export function BucketControls({
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<React.ReactNode>(null);
 
+  const activity = useActivity();
+  const [startedId, setStartedId] = useState<string | null>(null);
+  const batch = activity?.batches.find((b) => b.id === startedId) ?? activity?.batches.find((b) => b.slot === slot) ?? null;
+  const generating = busy === "generate" || batch?.status === "running";
+
+  // Refresh the server-rendered tables when a batch for this slot finishes.
+  const lastStatus = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (lastStatus.current === "running" && batch && batch.status !== "running") router.refresh();
+    lastStatus.current = batch?.status;
+  }, [batch, router]);
+
   const generate = async () => {
     setBusy("generate");
     setMsg(null);
     try {
-      const s = await post<BatchSummary>(`/api/admin/buckets/${slot}/generate`, { count, provider });
-      setMsg(
-        <span data-testid="batch-summary">
-          Batch with generator v{s.generatorVersion} via {s.provider}
-          {s.devAdapter ? " (development adapter)" : ""}: {s.produced} produced — {s.passed} validated, {s.needsReview} need math review, {s.failed} failed validation
-          {s.discarded.length ? `, ${s.discarded.length} discarded (schema)` : ""}.{" "}
-          <a className="font-semibold underline" href={`/admin/review?slot=${slot}&batch=${s.batchId}`} data-testid="review-batch-link">
-            Review this batch →
-          </a>
-        </span>,
-      );
+      const r = await post<{ batchId: string }>(`/api/admin/buckets/${slot}/generate`, { count, provider });
+      setStartedId(r.batchId);
+      requestActivityRefresh();
       router.refresh();
     } catch (e) {
       setMsg(<span className="text-red-600">{(e as Error).message}</span>);
@@ -86,8 +127,8 @@ export function BucketControls({
             </option>
           ))}
         </select>
-        <button className="rounded bg-neutral-900 px-3 py-1 font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black" disabled={Boolean(busy)} onClick={generate} data-testid="generate">
-          {busy === "generate" ? "Generating & validating…" : "Generate batch"}
+        <button className="rounded bg-neutral-900 px-3 py-1 font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black" disabled={Boolean(busy) || generating} onClick={generate} data-testid="generate">
+          {busy === "generate" ? "Starting…" : batch?.status === "running" ? "Batch in progress…" : "Generate batch"}
         </button>
         <span className="mx-2 h-5 w-px bg-neutral-300" />
         <label className="flex items-center gap-1" title={hasAI ? "" : "ANTHROPIC_API_KEY not configured"}>
@@ -101,6 +142,7 @@ export function BucketControls({
         </a>
       </div>
       {msg && <p className="mt-2">{msg}</p>}
+      {batch && activity && <BatchProgress batch={batch} skewMs={activity.skewMs} />}
     </div>
   );
 }

@@ -41,35 +41,61 @@ export async function loadExamples(questionIds: string[]): Promise<ExampleQuesti
   return rows.filter((r) => r.judgment !== ("retracted" as string));
 }
 
-export async function runGenerationBatch(args: {
+export interface StartArgs {
   slot: number;
   count: number;
   providerId: ProviderId;
   adminId: string | null;
   seed?: number;
-}): Promise<BatchSummary> {
+}
+
+/**
+ * Validate the request, apply the rate limit and create the batch row (stage
+ * `queued`). Fast: the caller returns to the browser and runs executeBatch
+ * afterwards (Next.js `after()`), so the admin can leave the page.
+ */
+export async function startGenerationBatch(args: StartArgs): Promise<{ batchId: string }> {
   if (!Number.isInteger(args.slot) || args.slot < 1 || args.slot > 8) throw new HttpError(400, "slot must be 1–8");
   if (!Number.isInteger(args.count) || args.count < 1 || args.count > 20) throw new HttpError(400, "count must be 1–20");
   if (args.adminId) {
     const perHour = Number(process.env.GENERATION_RATE_LIMIT_PER_HOUR ?? 20);
     await enforceRateLimit(`gen:${args.adminId}`, perHour, 3600);
   }
-
-  const [bucket] = await sql<{ name: string; character: string; gv_id: string; gv_version: number; profile: unknown }[]>`
-    select b.name, b.character, g.id as gv_id, g.version as gv_version, g.profile
-    from bucket_profiles b join generator_versions g on g.id = b.active_generator_version_id
+  const [bucket] = await sql<{ gv_id: string; profile: unknown }[]>`
+    select g.id as gv_id, g.profile from bucket_profiles b join generator_versions g on g.id = b.active_generator_version_id
     where b.slot = ${args.slot}`;
   if (!bucket) throw new HttpError(409, `slot ${args.slot} has no active generator version`);
-  const profile = GeneratorProfile.parse(bucket.profile);
-  const provider = getProvider(args.providerId, profile.model);
+  const provider = getProvider(args.providerId, GeneratorProfile.parse(bucket.profile).model);
   const seed = args.seed ?? Math.floor(Math.random() * 2 ** 31);
-
   const [batch] = await sql<{ id: string }[]>`
-    insert into generation_batches (slot, generator_version_id, provider, model, requested_count, seed, created_by)
-    values (${args.slot}, ${bucket.gv_id}, ${provider.id}, ${provider.model}, ${args.count}, ${seed}, ${args.adminId})
+    insert into generation_batches (slot, generator_version_id, provider, model, requested_count, seed, created_by, stage)
+    values (${args.slot}, ${bucket.gv_id}, ${provider.id}, ${provider.model}, ${args.count}, ${seed}, ${args.adminId}, 'queued')
     returning id`;
+  return { batchId: batch.id };
+}
+
+async function setStage(batchId: string, stage: string) {
+  await sql`update generation_batches set stage = ${stage}, updated_at = now() where id = ${batchId} and status = 'running'`;
+}
+
+/** Run a queued batch to completion: generate → persist → validate → enqueue Lean. */
+export async function executeBatch(batchId: string): Promise<BatchSummary> {
+  const [b] = await sql<{ slot: number; requested_count: number; provider: ProviderId; seed: string | number; created_by: string | null; generator_version_id: string; status: string }[]>`
+    select slot, requested_count, provider, seed, created_by, generator_version_id, status from generation_batches where id = ${batchId}`;
+  if (!b) throw new HttpError(404, "batch not found");
+  if (b.status !== "running") throw new HttpError(409, `batch is ${b.status}`);
+  const [bucket] = await sql<{ name: string; character: string; gv_version: number; profile: unknown }[]>`
+    select bp.name, bp.character, g.version as gv_version, g.profile
+    from generator_versions g join bucket_profiles bp on bp.slot = g.slot where g.id = ${b.generator_version_id}`;
+  const args = { slot: b.slot, count: b.requested_count, adminId: b.created_by };
+  const profile = GeneratorProfile.parse(bucket.profile);
+  const provider = getProvider(b.provider, profile.model);
+  const seed = Number(b.seed);
+  const batch = { id: batchId };
+  const gvId = b.generator_version_id;
 
   try {
+    await setStage(batchId, "generating");
     const examples = await loadExamples([...profile.examples.ideal, ...profile.examples.too_easy, ...profile.examples.too_hard]);
     const recent = await sql<{ statement: string; techniques: string[] }[]>`
       select v.statement, v.techniques from questions q join question_versions v on v.id = q.current_version_id
@@ -92,6 +118,7 @@ export async function runGenerationBatch(args: {
       formalFailures: await recentFormalFailures(args.slot).catch(() => []),
     });
 
+    await setStage(batchId, "validating");
     const discarded: { reason: string }[] = [];
     const versionIds: string[] = [];
     const existing = await sql<{ statement: string; options: string[] }[]>`
@@ -115,7 +142,7 @@ export async function runGenerationBatch(args: {
         insertQuestion(tx, {
           slot: args.slot,
           batchId: batch.id,
-          generatorVersionId: bucket.gv_id,
+          generatorVersionId: gvId,
           source: provider.id === "anthropic" ? "ai" : "procedural",
           candidate: parsed.data,
           meta: { ...item.meta, provider: provider.id, model: provider.model, generator_version: bucket.gv_version, batch_id: batch.id, seed },
@@ -129,15 +156,7 @@ export async function runGenerationBatch(args: {
     await enqueueLean(outcomes.filter((o) => o.status !== "failed").map((o) => o.versionId)).catch((e) =>
       console.error("[mathdle] could not enqueue Lean jobs", e),
     );
-    await sql`update generation_batches set status = 'completed', produced_count = ${versionIds.length},
-              usage = ${sql.json({ ...(usage ?? {}), discarded } as never)}, completed_at = now() where id = ${batch.id}`;
-    if (args.adminId)
-      await audit(sql, args.adminId, "generate_batch", "generation_batch", batch.id, {
-        slot: args.slot,
-        provider: provider.id,
-        produced: versionIds.length,
-      });
-    return {
+    const summary: BatchSummary = {
       batchId: batch.id,
       provider: provider.id,
       devAdapter: provider.devAdapter,
@@ -149,8 +168,29 @@ export async function runGenerationBatch(args: {
       failed: outcomes.filter((o) => o.status === "failed").length,
       needsReview: outcomes.filter((o) => o.status === "needs_review").length,
     };
+    await sql`update generation_batches set status = 'completed', stage = 'done', produced_count = ${versionIds.length},
+              usage = ${sql.json({ ...(usage ?? {}), discarded } as never)}, summary = ${sql.json(summary as never)},
+              completed_at = now(), updated_at = now() where id = ${batch.id}`;
+    if (args.adminId)
+      await audit(sql, args.adminId, "generate_batch", "generation_batch", batch.id, { slot: args.slot, provider: provider.id, produced: versionIds.length });
+    return summary;
   } catch (e) {
-    await sql`update generation_batches set status = 'failed', error = ${(e as Error).message.slice(0, 2000)}, completed_at = now() where id = ${batch.id}`;
+    await sql`update generation_batches set status = 'failed', stage = 'failed', error = ${(e as Error).message.slice(0, 2000)},
+              completed_at = now(), updated_at = now() where id = ${batch.id}`;
     throw e instanceof HttpError ? e : new HttpError(502, `generation failed: ${(e as Error).message}`);
   }
+}
+
+/** Synchronous convenience (scripts and tests): start and run to completion. */
+export async function runGenerationBatch(args: StartArgs): Promise<BatchSummary> {
+  const { batchId } = await startGenerationBatch(args);
+  return executeBatch(batchId);
+}
+
+/** Batches the server stopped working on (e.g. function time limit) are marked failed instead of spinning forever. */
+export async function failStaleBatches() {
+  await sql`update generation_batches set status = 'failed', stage = 'failed',
+              error = 'stopped responding (server time limit reached) — try a smaller batch',
+              completed_at = now(), updated_at = now()
+            where status = 'running' and updated_at < now() - interval '6 minutes'`;
 }
