@@ -191,6 +191,54 @@ Independent checks; any failure blocks publication; anything that cannot be mach
 
 ---
 
+## Formal verification (Lean 4 + Mathlib)
+
+Lean is an **additional, asynchronous** check. It never runs during gameplay, never blocks a generation batch, and never approves a question on its own. SymPy validation and your difficulty review are unchanged.
+
+```text
+generate → SymPy validation → enqueue Lean job → (after the response / cron / Retry)
+  eligibility → formalization → Lean kernel (isolated) → consistency audit → stored result → review UI
+```
+
+**What it checks for an eligible question** (all theorem headers are written by Mathdle, never by the AI):
+
+| Theorem | Meaning |
+|---|---|
+| `mathdle_key` | the answer key satisfies the question |
+| `mathdle_excludes_x` | each distractor does **not** |
+| `mathdle_distinct` | the four options are pairwise different values |
+| `mathdle_refute_*` | attempts to prove the key wrong / a distractor right — success here is a *refutation* |
+| `mathdle_unique` | (AI formalizations) nothing else satisfies the question |
+
+**Formalization methods**
+* `expression` (deterministic): the question's own SymPy verification expression and option values are exported to closed Lean terms **without evaluating them** (`.doit()` is stripped; finite sums/products become `∑`/`∏ k ∈ Finset.Icc a b`). Bare literals are refused because they would make a vacuous claim. This kernel-checks the arithmetic; whether the expression is what the question asks is left to the audit.
+* `ai` (Claude): formalizes the question text as a predicate `P v` *without seeing the answer key*; options are instantiated into `P`.
+
+**Trust gates:** AI fragments are linted (no `sorry`, `axiom`, `#eval`, `native_decide`, meta-programming, `set_option`, imports, new declarations); after compiling, `#print axioms` must show only `propext`, `Classical.choice`, `Quot.sound`. Proof search: a tactic cascade, then optional AI proof repair whose output is linted and kernel-checked.
+
+**Consistency audit** (stored separately from proof success): deterministic checks for Lean junk values (division by an expression that can be 0, `Real.sqrt`/`Real.log` domains, truncated ℕ subtraction, floor division, rounding, unjustified assumptions) plus an advisory Claude audit that sees the question and theorem statements but not proofs. A refutation only counts — and only then blocks publication — when the formalization is not flagged.
+
+**Statuses:** `verified` (proofs + audit passed) · `proof_failed` (Lean rejected submitted proofs, or *refuted* the key) · `inconclusive` (proof search or audit could not finish — not evidence the answer is wrong) · `unsupported` (geometry/diagrams, rounding, no faithful formalization) · `consistency_failed` · `pending`.
+
+**Currently supported:** exact arithmetic over ℤ/ℚ/ℝ (fractions, powers, roots, `max`/`min`, `|x|`, floor/ceiling, factorial/binomial of literals), modular arithmetic, finite sums/products with literal bounds, and — with Claude — polynomial equations, identities, inequalities, divisibility and finite combinatorial identities. **Unsupported:** geometry and diagram questions, rounded decimals, probability/modelling questions, anything that cannot be stated faithfully.
+
+**Where it runs**
+* Production: each check starts a fresh **Vercel Sandbox** microVM from a snapshot with only Lean 4.35.0 + Mathlib v4.35.0 (`yul1`), `deny-all` network, no environment variables or credentials, stopped afterwards. The Next.js function submits the job and reads the persisted result. `POST /api/admin/lean/snapshot` re-proves a smoke theorem and stores a non-expiring copy of the snapshot in `app_settings`.
+* Local development: `lake env lean` under `prlimit` (24 GiB virtual, 300 s CPU), empty environment, private temp dir and `unshare --net` when available. Weaker than a microVM — dev/test only.
+
+**Data:** `lean_verifications` (append-only history per immutable question version: eligibility, method, claim, assumptions, theorem statements, full checked file, per-theorem results and axioms, diagnostics, consistency status/findings, Lean/Mathlib/env/pipeline versions, runner, duration, attempts) and `lean_check_cache` (kernel results keyed by source hash + environment version).
+
+**Local setup**
+```bash
+# 1. Lean 4.35.0 toolchain (official release archive)
+curl -L -o lean.tar.zst https://github.com/leanprover/lean4/releases/download/v4.35.0/lean-4.35.0-linux.tar.zst
+# extract with zstd/tar, then put its bin/ on LEAN_BIN_DIR
+# 2. A Lake project outside the repo, built from lean/ (pinned lockfile)
+mkdir ~/mathdle-lean && cp lean/{lean-toolchain,lakefile.toml,lake-manifest.json} ~/mathdle-lean/
+cd ~/mathdle-lean && PATH=$LEAN_BIN_DIR:$PATH lake exe cache get   # ~7 GB of prebuilt Mathlib
+```
+Then set `LEAN_PROJECT_DIR` / `LEAN_BIN_DIR` in `.env`. `npm test` runs the Lean proof-of-concept suite against the real kernel (it is skipped when no Lean project is configured).
+
 ## Security model
 
 * Browsers never touch the database. All tables have RLS enabled with **no policies** and no grants for `anon`/`authenticated`; tests assert `permission denied` for both roles.

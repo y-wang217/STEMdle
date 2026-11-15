@@ -43,6 +43,8 @@ export const CASCADE = [
   "(intro h; have h2 := congrArg (fun x => x ^ 2) h; norm_num [mul_pow, div_pow, Real.sq_sqrt, Real.sqrt_nonneg] at h2)",
   "(rw [Real.sqrt_eq_iff_mul_self_eq_of_pos (by norm_num)]; norm_num)",
   "(simp; done)",
+  "(norm_num [Finset.sum_Icc_succ_top, Finset.prod_Icc_succ_top])",
+  "(simp [Finset.sum_Icc_succ_top, Finset.prod_Icc_succ_top]; norm_num)",
   "(ring_nf; done)",
   "(field_simp; ring_nf; done)",
   "(norm_num [abs_of_nonneg, abs_of_nonpos, Int.floor_eq_iff, Int.ceil_eq_iff]; done)",

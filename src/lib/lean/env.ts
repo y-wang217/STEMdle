@@ -2,7 +2,7 @@
 export const LEAN_VERSION = "4.35.0";
 export const MATHLIB_VERSION = "v4.35.0";
 /** Changing Lean, Mathlib, the checker template or the tactic cascade must bump this (invalidates the proof cache). */
-export const LEAN_ENV_VERSION = `lean-${LEAN_VERSION}+mathlib-${MATHLIB_VERSION}+checker-2`;
+export const LEAN_ENV_VERSION = `lean-${LEAN_VERSION}+mathlib-${MATHLIB_VERSION}+checker-3`;
 /** Version of the whole pipeline (eligibility, formalization, audit). Recorded on every verification. */
 export const LEAN_PIPELINE_VERSION = "lean-pipeline-1";
 

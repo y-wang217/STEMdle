@@ -172,6 +172,22 @@ describeLean("Lean 4 verification (real kernel)", () => {
     expect(out.theorem_source).toContain("7 : ℤ) ^ 2026");
   });
 
+  it("regression: a .doit() verification expression is exported structurally, not as a vacuous 5 = 5", async () => {
+    const q = await store(
+      candidate(
+        "Compute $\\left(1+\\frac12\\right)\\left(1+\\frac13\\right)\\cdots\\left(1+\\frac19\\right)$.",
+        [["$5$", "5", true], ["$10$", "10", false], ["$\\frac{9}{2}$", "Rational(9,2)", false], ["$\\frac{11}{2}$", "Rational(11,2)", false]],
+        "Product(1 + 1/k, (k, 2, 9)).doit()",
+      ),
+    );
+    const out = await verifyQuestion(q, r);
+    expect(out.theorem_source).toContain("∏ k ∈ Finset.Icc (2 : ℕ) 9");
+    const roles = (role: string) => out.results!.filter((x) => x.role === role);
+    expect(roles("key")[0].proved).toBe(true);
+    for (const x of roles("excludes")) expect(x.proved, x.name).toBe(true);
+    expect(out.refuted).toBe(false);
+  });
+
   it("jobs are idempotent, cached, persisted per immutable version, and Lean refutation blocks publication", async () => {
     const { versionId } = await approvedQuestion(1, adminId);
     expect(await enqueueLean([versionId])).toBe(1);

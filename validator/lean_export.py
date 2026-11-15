@@ -9,6 +9,7 @@ back to the AI formalizer or marks the question unsupported.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import sympy as sp
@@ -24,6 +25,9 @@ class Unsupported(Exception):
 
 
 def _parse(src: str) -> Any:
+    # `.doit()` would make SymPy compute the answer before export, leaving Lean
+    # a vacuous `5 = 5`. Export the structure instead.
+    src = src.replace(".doit()", "")
     bound = check_expression_safety(src)
     ns = _namespace()
     # parse_expr(evaluate=False) emits Add/Mul/Pow(...) calls in generated code
@@ -51,11 +55,26 @@ def _parse(src: str) -> Any:
         )
 
 
+MAX_TERMS = 200
+
+
+def _bound_symbols(e: Any) -> set:
+    out = set()
+    for node in sp.preorder_traversal(e):
+        if isinstance(node, (sp.Sum, sp.Product)):
+            for lim in node.limits:
+                out.add(lim[0])
+    return out
+
+
 def required_type(e: Any) -> str:
     """Smallest of ℤ ⊂ ℚ ⊂ ℝ in which the term can be stated faithfully."""
     t = "ℤ"
+    bound = _bound_symbols(e)
     for node in sp.preorder_traversal(e):
         if isinstance(node, sp.Symbol):
+            if node in bound:
+                continue
             raise Unsupported(f"free variable {node} (only closed terms are exported)")
         if node in (sp.pi, sp.E) or isinstance(node, (sp.sin, sp.cos, sp.tan, sp.log, sp.exp, sp.asin, sp.acos, sp.atan)):
             t = "ℝ"
@@ -82,6 +101,21 @@ class LeanPrinter:
 
     def p(self, e: Any) -> str:  # noqa: C901
         ty = self.ty
+        if isinstance(e, sp.Symbol):
+            if e in getattr(self, "bound", set()):
+                return f"({e.name} : {ty})"
+            raise Unsupported(f"free variable {e}")
+        if isinstance(e, (sp.Sum, sp.Product)):
+            if len(e.limits) != 1:
+                raise Unsupported("nested limits")
+            var, lo, hi = e.limits[0]
+            if not (lo.is_Integer and hi.is_Integer and 0 <= lo <= hi and hi - lo < MAX_TERMS):
+                raise Unsupported("sum/product bounds must be literal naturals with fewer than 200 terms")
+            if not re.fullmatch(r"[a-z]", var.name):
+                raise Unsupported("bound variable must be a single letter")
+            self.bound = getattr(self, "bound", set()) | {var}
+            op = "∑" if isinstance(e, sp.Sum) else "∏"
+            return f"({op} {var.name} ∈ Finset.Icc ({int(lo)} : ℕ) {int(hi)}, {self.p(e.function)})"
         if e is sp.pi:
             return "Real.pi"
         if e is sp.E:
@@ -168,8 +202,10 @@ def export(expression: str, option_values: list[str]) -> dict:
             pass  # integer % is fine in ℤ
         elif any(isinstance(n, sp.Mod) for n in sp.preorder_traversal(expr)):
             raise Unsupported("Mod mixed with non-integer values")
+        if expr.is_Atom or (isinstance(expr, sp.Rational)):
+            raise Unsupported("verification expression is already a bare value; there is no computation for Lean to check")
         pr = LeanPrinter(ty)
-        return {"ok": True, "type": ty, "expression": pr.p(expr), "options": [pr.p(o) for o in opts]}
+        return {"ok": True, "type": ty, "expression": pr.p(expr), "options": [LeanPrinter(ty).p(o) for o in opts]}
     except (Unsupported, UnsafeExpression) as e:
         return {"ok": False, "reason": str(e)}
     except Exception as e:  # noqa: BLE001
