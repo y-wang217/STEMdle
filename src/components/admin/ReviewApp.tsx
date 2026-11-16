@@ -194,7 +194,7 @@ export function ReviewApp({ items: initial, filter }: { items: ReviewItem[]; fil
         {done && items.length > 0 && (
           <div className="rounded border border-green-600 p-6 text-center" data-testid="review-done">
             <p className="text-base font-semibold">Batch reviewed.</p>
-            <p className="mt-1">Next step: open the bucket page and “Learn from feedback” to propose an improved generator version.</p>
+            <p className="mt-1">Your judgments are being folded into a new generator version, which becomes active automatically. The next batch uses it.</p>
             <div className="mt-3 flex justify-center gap-2">
               <button className="rounded border px-3 py-1" onClick={() => goto(items.length - 1)}>
                 ← Back to last

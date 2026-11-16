@@ -102,7 +102,7 @@ export function BucketControls({
     setMsg(null);
     try {
       const r = await post<{ version: number }>(`/api/admin/buckets/${slot}/learn`, { useAI });
-      setMsg(<span data-testid="learn-result">Proposed draft generator v{r.version}. Review the summary below and activate it to use it for the next batch.</span>);
+      setMsg(<span data-testid="learn-result">Proposed draft generator v{r.version}. Review the summary below and activate it to use it for the next batch. (Finished reviews upgrade the generator automatically; this button is for learning early.)</span>);
       router.refresh();
     } catch (e) {
       setMsg(<span className="text-red-600">{(e as Error).message}</span>);
@@ -135,7 +135,7 @@ export function BucketControls({
           <input type="checkbox" checked={useAI} disabled={!hasAI} onChange={(e) => setUseAI(e.target.checked)} /> AI analysis
         </label>
         <button className="rounded border px-3 py-1 font-medium disabled:opacity-50" disabled={Boolean(busy)} onClick={learn} data-testid="learn">
-          {busy === "learn" ? "Analysing feedback…" : "Learn from feedback → draft new version"}
+          {busy === "learn" ? "Analysing feedback…" : "Learn now → draft new version"}
         </button>
         <a className="ml-auto underline" href={`/admin/review?slot=${slot}`}>
           Review queue

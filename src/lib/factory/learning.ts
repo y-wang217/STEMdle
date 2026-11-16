@@ -12,6 +12,7 @@ import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/http";
 import { audit } from "@/lib/audit";
 import { BucketConfig, GeneratorProfile, type GeneratorProfileT } from "@/lib/buckets/defaults";
+import { learnDiagramPolicy } from "./diagram-policy";
 import { getProvider } from "./providers";
 import type { ExampleQuestion, ProfileProposal } from "./providers/types";
 import { loadExamples } from "./pipeline";
@@ -118,6 +119,13 @@ export async function proposeNextVersion(slot: number, adminId: string, opts: { 
   else patterns.push(`Difficulty is balanced (${pct(easyRate)} too easy, ${pct(hardRate)} too hard).`);
   if (total.invalid) patterns.push(`${total.invalid} question(s) flagged invalid.`);
 
+  // Diagram requests in editor notes ("needs a diagram") raise the slot's diagram policy.
+  const diagramChange = learnDiagramPolicy(profile.diagrams, rows.map((r) => r.note));
+  if (diagramChange) {
+    next.diagrams = diagramChange.to;
+    patterns.push(`${diagramChange.mentions} editor note(s) asked for diagrams → diagram policy ${profile.diagrams} → ${diagramChange.to}.`);
+  }
+
   const notes = rows.filter((r) => r.note).map((r) => `(${r.judgment.replace("_", " ")}) ${r.note}`);
   const newInstructions = notes.map((n) => `Editor note: ${n}`);
   next.editorial_instructions = [...new Set([...profile.editorial_instructions, ...newInstructions])].slice(-30);
@@ -154,6 +162,7 @@ export async function proposeNextVersion(slot: number, adminId: string, opts: { 
     per_template: perTemplate,
     template_changes: templateChanges,
     difficulty_change: { from: profile.target_difficulty, to: next.target_difficulty, procedural_from: profile.procedural.difficulty, procedural_to: next.procedural.difficulty },
+    diagram_change: diagramChange ? { from: profile.diagrams, to: diagramChange.to } : null,
     patterns,
     new_instructions: next.editorial_instructions.filter((i) => !profile.editorial_instructions.includes(i)),
     ai_used: Boolean(ai),
@@ -167,6 +176,42 @@ export async function proposeNextVersion(slot: number, adminId: string, opts: { 
     returning id, version`;
   await audit(sql, adminId, "propose_generator_version", "generator_version", gv.id, { slot, version: gv.version, judgments: total.n });
   return { id: gv.id, version: gv.version, summary };
+}
+
+/**
+ * Automatic upgrade: when a slot has enough new judgments, learn from them and
+ * activate the result immediately, so the next batch uses it without a manual
+ * "learn → activate" round trip. Safe to call often: it is a no-op below the
+ * threshold, when disabled in the bucket config, or while another run holds the
+ * slot's lock. Returns the activated version, or null.
+ */
+export async function autoLearn(slot: number, adminId: string): Promise<{ id: string; version: number } | null> {
+  const [b] = await sql<{ config: unknown }[]>`select config from bucket_profiles where slot = ${slot}`;
+  if (!b) return null;
+  const cfg = BucketConfig.parse(b.config).auto_learn;
+  if (!cfg.enabled) return null;
+  if ((await unconsumedFeedback(slot)).length < cfg.min_judgments) return null;
+  return sql.begin(async (tx) => {
+    const [{ locked }] = await tx<{ locked: boolean }[]>`select pg_try_advisory_xact_lock(hashtext('mathdle:auto_learn'), ${slot}) as locked`;
+    if (!locked) return null;
+    // Re-check under the lock: a concurrent run may have just consumed these judgments.
+    if ((await unconsumedFeedback(slot)).length < cfg.min_judgments) return null;
+    const proposed = await proposeNextVersion(slot, adminId, { useAI: Boolean(process.env.ANTHROPIC_API_KEY) });
+    await sql`update generator_versions set learning_summary = learning_summary || ${sql.json({ auto_activated: true } as never)} where id = ${proposed.id}`;
+    await activateVersion(proposed.id, adminId);
+    console.log(`[mathdle] auto-learn: slot ${slot} → v${proposed.version}`);
+    return { id: proposed.id, version: proposed.version };
+  });
+}
+
+/** True once every question of the batch that passed validation has a judgment. */
+export async function batchFullyReviewed(questionId: string): Promise<{ slot: number; done: boolean } | null> {
+  const [r] = await sql<{ slot: number; pending: number }[]>`
+    select q0.slot, (select count(*)::int from questions q
+       where q.batch_id = q0.batch_id and q.status not in ('validation_failed', 'validating')
+         and not exists (select 1 from question_feedback f where f.question_id = q.id and f.judgment <> 'retracted')) as pending
+    from questions q0 where q0.id = ${questionId}`;
+  return r ? { slot: r.slot, done: r.pending === 0 } : null;
 }
 
 export async function activateVersion(versionId: string, adminId: string) {

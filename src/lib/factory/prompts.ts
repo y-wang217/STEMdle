@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { DiagramSpec } from "@/lib/schemas/question";
 import type { ExampleQuestion, GenerationRequest, LearningInput } from "./providers/types";
+import type { DiagramPolicyT } from "@/lib/buckets/defaults";
+
+export const DIAGRAM_POLICY_TEXT: Record<DiagramPolicyT, string> = {
+  required:
+    "Diagram policy: REQUIRED. Every question in this batch must include a diagram (diagram_json must not be null). Choose ideas that can be drawn.",
+  preferred:
+    "Diagram policy: PREFERRED. Include a diagram in most questions (at least three in four): whenever there is a figure, a graph, a triangle or an angle to show. Skip it only for purely symbolic questions.",
+  when_helpful: "Diagram policy: only when a diagram genuinely helps; prefer self-contained text.",
+};
 
 const DIAGRAM_FORMAT = JSON.stringify(z.toJSONSchema(DiagramSpec));
 
@@ -26,7 +35,9 @@ Machine-checkable fields (critical — questions failing these are discarded)
 - If and only if no SymPy check is possible, set verification.kind = "manual" (the question will need human mathematical review — avoid).
 
 Diagrams
-- Only when they genuinely help. Use the structured spec (points with coordinates, segments, polygons, circles, angles, function graphs). Coordinates must be an accurate construction; labelled lengths (segment.length) and angles (angle.measure_deg) are verified against coordinates. Set essential=true only if the text alone is insufficient — prefer self-contained text. Always give alt_text.
+- Whether to draw one is set per slot in the user message ("Diagram policy"). Follow it.
+- Use the structured spec (points with coordinates, segments, polygons, circles, angles, function graphs). Coordinates must be an accurate construction; labelled lengths (segment.length) and angles (angle.measure_deg) are verified against coordinates. Keep the statement self-contained (state every given value in the text too) and set essential=true only if the text alone is insufficient. Always give alt_text.
+- Good diagrams: the triangle/circle/figure described, with given lengths and angles labelled and the unknown marked (e.g. "x" or "?"); the line or parabola on labelled x- and y-axes; the reference angle on the unit circle or in a right triangle. Never label the answer.
 
 Diagram format: put the diagram in diagram_json as a JSON string (or null for no diagram). It must validate against this JSON Schema:
 ${DIAGRAM_FORMAT}
@@ -48,6 +59,7 @@ export function generatorUserPrompt(req: GenerationRequest): string {
     `Prefer:\n${p.preferred.map((s) => `- ${s}`).join("\n")}`,
     `Avoid:\n${p.forbidden.map((s) => `- ${s}`).join("\n")}`,
     `Useful techniques: ${p.techniques.join(", ")}\nKnown misconceptions to build traps from: ${p.misconceptions.join("; ")}`,
+    DIAGRAM_POLICY_TEXT[p.diagrams],
   ];
   if (p.editorial_instructions.length)
     sections.push(`Editorial instructions learned from the editor's feedback (follow closely):\n${p.editorial_instructions.map((s) => `- ${s}`).join("\n")}`);

@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { HttpError, json, readJson } from "@/lib/http";
 import { adminRoute } from "@/lib/admin/route";
-import { executeBatch, startGenerationBatch } from "@/lib/factory/pipeline";
+import { executeBatch, rebindQueuedBatch, startGenerationBatch } from "@/lib/factory/pipeline";
+import { autoLearn } from "@/lib/factory/learning";
 import { availableProviders } from "@/lib/factory/providers";
 import { after } from "next/server";
 import { processLeanQueue } from "@/lib/lean/pipeline";
@@ -20,6 +21,9 @@ export const POST = adminRoute<{ slot: string }>(async (req, admin, { slot }) =>
   // so the admin can leave the page. Progress is read from /api/admin/activity.
   after(async () => {
     const started = Date.now();
+    // Learn from any judgments not yet folded in, then generate with the newest version.
+    const learned = await autoLearn(Number(slot), admin.id).catch((e) => console.error("[mathdle] auto-learn", slot, (e as Error).message));
+    if (learned) await rebindQueuedBatch(batchId);
     await executeBatch(batchId).catch((e) => console.error("[mathdle] batch", batchId, (e as Error).message));
     const left = 280_000 - (Date.now() - started);
     if (left > 30_000) await processLeanQueue({ deadlineMs: left - 20_000 }).catch((e) => console.error("[mathdle] lean queue", e));

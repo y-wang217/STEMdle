@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { sql } from "@/lib/db";
 import { runGenerationBatch } from "@/lib/factory/pipeline";
 import { effectiveJudgment, recordJudgment, markMathVerified } from "@/lib/factory/feedback";
-import { activateVersion, proposeNextVersion } from "@/lib/factory/learning";
+import { activateVersion, autoLearn, batchFullyReviewed, proposeNextVersion } from "@/lib/factory/learning";
 import { calibrationVerdict, markCalibrated, versionMetrics } from "@/lib/factory/metrics";
 import { insertQuestion } from "@/lib/factory/store";
 import { validateVersions } from "@/lib/factory/validate";
@@ -161,5 +161,45 @@ describe("validation blocks bad questions (acceptance 5)", () => {
     const [out] = await validateVersions([b.versionId]);
     expect(out.status).toBe("failed");
     expect(out.checks.find((x) => x.name === "duplicate")?.status).toBe("fail");
+  });
+});
+
+describe("automatic upgrade after a finished review", () => {
+  it("learns and activates once the batch is fully judged, picking up diagram requests", async () => {
+    const active = async () =>
+      (await sql<{ id: string; version: number; profile: { diagrams?: string; target_difficulty: number }; learning_summary: { auto_activated?: boolean } | null }[]>`
+        select g.id, g.version, g.profile, g.learning_summary from bucket_profiles b join generator_versions g on g.id = b.active_generator_version_id where b.slot = 2`)[0];
+    const before = await active();
+    const s = await runGenerationBatch({ slot: 2, count: 6, providerId: "procedural", adminId, seed: 77 });
+    const qs = await questionsOf(s.batchId);
+    expect(qs.length).toBeGreaterThanOrEqual(6);
+
+    // Below the threshold / batch not finished: nothing happens.
+    await recordJudgment({ adminId, questionId: qs[0].id, judgment: "too_hard", note: "needs a diagram" });
+    expect((await batchFullyReviewed(qs[0].id))?.done).toBe(false);
+    expect(await autoLearn(2, adminId)).toBeNull();
+    expect((await active()).id).toBe(before.id);
+
+    for (const q of qs.slice(1)) await recordJudgment({ adminId, questionId: q.id, judgment: "too_hard", note: q === qs[1] ? "these all must have a diagram" : null });
+    expect((await batchFullyReviewed(qs[0].id))?.done).toBe(true);
+
+    const r = await autoLearn(2, adminId);
+    expect(r).not.toBeNull();
+    const after = await active();
+    expect(after.id).toBe(r!.id);
+    expect(after.version).toBe(before.version + 1);
+    expect(after.profile.diagrams).toBe("required");
+    expect(after.profile.target_difficulty).toBeLessThan(before.profile.target_difficulty);
+    expect(after.learning_summary?.auto_activated).toBe(true);
+
+    // The judgments are consumed: a second call is a no-op.
+    expect(await autoLearn(2, adminId)).toBeNull();
+  });
+
+  it("respects auto_learn.enabled = false in the bucket config", async () => {
+    await sql`update bucket_profiles set config = config || '{"auto_learn":{"enabled":false,"min_judgments":3}}'::jsonb where slot = 4`;
+    const s = await runGenerationBatch({ slot: 4, count: 3, providerId: "procedural", adminId, seed: 5 });
+    for (const q of await questionsOf(s.batchId)) await recordJudgment({ adminId, questionId: q.id, judgment: "too_easy" });
+    expect(await autoLearn(4, adminId)).toBeNull();
   });
 });

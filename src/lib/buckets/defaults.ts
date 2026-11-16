@@ -6,6 +6,9 @@
  */
 import { z } from "zod";
 
+export const DiagramPolicy = z.enum(["when_helpful", "preferred", "required"]);
+export type DiagramPolicyT = z.infer<typeof DiagramPolicy>;
+
 export const GeneratorProfile = z.object({
   topic: z.string(),
   subtopics: z.array(z.string()),
@@ -22,6 +25,8 @@ export const GeneratorProfile = z.object({
     too_hard: z.array(z.string()),
   }),
   editorial_instructions: z.array(z.string()),
+  /** How strongly this slot's questions should carry a diagram. Learned from editor notes ("needs a diagram"). */
+  diagrams: DiagramPolicy.default("when_helpful"),
   model: z.string().nullable(),
   procedural: z.object({
     difficulty: z.number(),
@@ -37,6 +42,11 @@ export const BucketConfig = z.object({
     min_just_right_rate: z.number(),
     max_invalid_rate: z.number(),
   }),
+  /**
+   * Automatic upgrades: once this many new judgments exist, learning runs and the
+   * resulting version is activated without a manual click.
+   */
+  auto_learn: z.object({ enabled: z.boolean(), min_judgments: z.number().int().min(3) }).default({ enabled: true, min_judgments: 6 }),
 });
 export type BucketConfigT = z.infer<typeof BucketConfig>;
 
@@ -45,7 +55,7 @@ interface SlotSeed {
   name: string;
   category: string;
   character: string;
-  profile: Omit<GeneratorProfileT, "examples" | "model" | "procedural"> & { procedural_difficulty: number };
+  profile: Omit<GeneratorProfileT, "examples" | "model" | "procedural" | "diagrams"> & { procedural_difficulty: number; diagrams?: DiagramPolicyT };
 }
 
 const common = {
@@ -119,6 +129,7 @@ export const SLOT_SEEDS: SlotSeed[] = [
       misconceptions: ["assuming a figure is to scale", "confusing radius and diameter", "using slant height as height", "area scales linearly"],
       editorial_instructions: [],
       procedural_difficulty: 3.5,
+      diagrams: "required",
     },
   },
   {
@@ -138,6 +149,7 @@ export const SLOT_SEEDS: SlotSeed[] = [
       misconceptions: ["sign of horizontal shifts", "confusing x- and y-intercepts", "slope as run over rise", "vertex x = b/2a"],
       editorial_instructions: [],
       procedural_difficulty: 5,
+      diagrams: "preferred",
     },
   },
   {
@@ -157,6 +169,7 @@ export const SLOT_SEEDS: SlotSeed[] = [
       misconceptions: ["sin(a+b) = sin a + sin b", "missing solutions in other quadrants", "degree/radian confusion", "sign by quadrant"],
       editorial_instructions: [],
       procedural_difficulty: 5.5,
+      diagrams: "preferred",
     },
   },
   {
@@ -176,6 +189,7 @@ export const SLOT_SEEDS: SlotSeed[] = [
       misconceptions: ["assuming symmetry not given", "inscribed angle equals central angle", "area ratio equals length ratio"],
       editorial_instructions: [],
       procedural_difficulty: 6.8,
+      diagrams: "required",
     },
   },
   {
@@ -222,13 +236,15 @@ export function defaultConfig(seed: SlotSeed): BucketConfigT {
   return {
     difficulty_band: seed.profile.difficulty_band,
     calibration: { min_fresh_reviews: 10, min_just_right_rate: 0.6, max_invalid_rate: 0.1 },
+    auto_learn: { enabled: true, min_judgments: 6 },
   };
 }
 
 export function defaultProfile(seed: SlotSeed): GeneratorProfileT {
-  const { procedural_difficulty, ...rest } = seed.profile;
+  const { procedural_difficulty, diagrams, ...rest } = seed.profile;
   return {
     ...rest,
+    diagrams: diagrams ?? "when_helpful",
     examples: { too_easy: [], ideal: [], too_hard: [] },
     model: null,
     procedural: { difficulty: procedural_difficulty, template_weights: {} },

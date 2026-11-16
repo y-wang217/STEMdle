@@ -74,6 +74,12 @@ export async function startGenerationBatch(args: StartArgs): Promise<{ batchId: 
   return { batchId: batch.id };
 }
 
+/** Point a batch that has not started generating at the slot's current active generator version. */
+export async function rebindQueuedBatch(batchId: string) {
+  await sql`update generation_batches gb set generator_version_id = b.active_generator_version_id, updated_at = now()
+            from bucket_profiles b where gb.id = ${batchId} and b.slot = gb.slot and gb.stage = 'queued'`;
+}
+
 async function setStage(batchId: string, stage: string) {
   await sql`update generation_batches set stage = ${stage}, updated_at = now() where id = ${batchId} and status = 'running'`;
 }

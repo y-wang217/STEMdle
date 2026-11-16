@@ -166,7 +166,9 @@ Independent checks; any failure blocks publication; anything that cannot be mach
 
 * Judgments are append-only and never rewritten; the analysis is stored separately in the new version’s `learning_summary`.
 * “Learn from feedback” consumes judgments not used by any previous version, computes per-template and overall easy/right/hard/invalid rates, adjusts difficulty within the slot’s band, re-weights or disables templates, curates diverse examples for retrieval, turns editor notes into instructions, and (with Claude) proposes generalising editorial instructions. The result is a **draft** version.
-* An admin must **activate** a draft. A version can only be **marked calibrated** when it meets the bucket’s thresholds (default ≥10 reviews, ≥60% just right, ≤10% invalid) on **fresh questions it generated that were not in its training set** — never on self-evaluation.
+* **Automatic upgrades.** When every question in a batch has been judged (and the bucket has at least `auto_learn.min_judgments` new judgments, default 6), learning runs in the background and the new version is **activated automatically**; generating a batch does the same first, so each batch uses everything learned so far. Turn it off per bucket with `"auto_learn": {"enabled": false, ...}` in `bucket_profiles.config`. “Learn now” on the bucket page still proposes a draft for manual activation.
+* **Diagram policy** (`when_helpful` / `preferred` / `required`, per generator profile) tells the writer how often to draw. Editor notes asking for a diagram raise it: two requests step it up one level; a note saying diagrams are mandatory (“must”, “all”, “every”) sets `required`.
+* Drafts proposed manually must be **activated**. A version can only be **marked calibrated** when it meets the bucket’s thresholds (default ≥10 reviews, ≥60% just right, ≤10% invalid) on **fresh questions it generated that were not in its training set** — never on self-evaluation.
 * Live player data is shown next to the calibration metrics but never rewrites a profile.
 
 ---
