@@ -1,0 +1,24 @@
+# Graphify index exclusions. .gitignore is applied first (node_modules, .next,
+# .env*, build output, test results); this file only adds to it.
+
+# Graphify's own output and the vendored Claude Code config
+graphify-out/
+.claude/
+
+# Generated / lock files: large, no architectural signal
+package-lock.json
+lean/lake-manifest.json
+next-env.d.ts
+
+# Binary or static assets
+screenshots/
+public/
+*.ico
+*.png
+*.svg
+
+# Secrets (also gitignored; listed here so a --no-gitignore run still skips them)
+.env
+.env.*
+!.env.example
+*.pem

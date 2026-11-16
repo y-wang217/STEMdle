@@ -46,3 +46,6 @@ __pycache__/
 /screenshots/tmp/
 /.next-e2e/
 /.next-build/
+
+# graphify (local code graph; rebuild with `sh scripts/graph.sh`)
+/graphify-out/

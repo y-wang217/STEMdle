@@ -262,6 +262,8 @@ npm run typecheck && npm run lint
 
 Test databases are reset; the scripts refuse to reset a URL without `test`/`e2e` in it.
 
+Contributor map and optional local code-graph tooling (dev only, not deployed): [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/GRAPHIFY.md`](docs/GRAPHIFY.md).
+
 ---
 
 ## Deployment (Supabase + Vercel)
