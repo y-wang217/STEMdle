@@ -1,0 +1,28 @@
+{
+  "_comment": "Single source of truth for the agent pipeline (dev-pipeline kit). gate_commands: the fast local subset of CI that the Stop hook runs before a session may finish (aim for under 2 minutes). human_merge_paths: a PR touching any of these prefixes is labelled needs-human-merge by claude-review.yml and never auto-merged. review_round_cap: bot change requests before the owner is pinged.",
+  "repo": "OWNER/REPO",
+  "owner_login": "OWNER",
+  "default_branch": "main",
+  "branch_prefixes": ["req/", "claude/"],
+  "labels": { "human_merge": "needs-human-merge", "migration": "migration" },
+  "wip_limit": 3,
+  "review_round_cap": 3,
+  "gate_commands": [
+    "REPLACE: e.g. npm run typecheck",
+    "REPLACE: e.g. npm run lint",
+    "REPLACE: e.g. npm test"
+  ],
+  "gate_ignore_paths": ["docs/", ".claude/", ".github/", "README.md", "PIPELINE.md", "CLAUDE.md", "AGENTS.md", "screenshots/"],
+  "e2e_paths": ["REPLACE: UI and routing folders, e.g. src/app/", "src/components/"],
+  "human_merge_paths": [
+    ".env",
+    ".github/",
+    ".claude/hooks/",
+    ".claude/settings.json",
+    ".claude/pipeline.json",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "REPLACE: migrations folder, auth, payments, scoring, correctness core"
+  ]
+}

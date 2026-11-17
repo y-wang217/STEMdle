@@ -26,8 +26,8 @@ When a CI job failed earlier and you want to know why: `gh run list --branch <br
 
 ## Verdict
 Write the comment to a file under `/tmp` and post it with `gh pr comment <n> --body-file <file>`. Exactly one comment per run.
-- **Approve** only if every item passes: 2 to 4 lines on what you verified, then **Nits** (optional, non-blocking), then the marker line `<!-- stemdle-review verdict=approve sha=<sha> -->`.
-- Otherwise a numbered list of specific, actionable items, each pointing at a file and line, then `<!-- stemdle-review verdict=changes sha=<sha> -->`.
+- **Approve** only if every item passes: 2 to 4 lines on what you verified, then **Nits** (optional, non-blocking), then the marker line `<!-- pipeline-review verdict=approve sha=<sha> -->`.
+- Otherwise a numbered list of specific, actionable items, each pointing at a file and line, then `<!-- pipeline-review verdict=changes sha=<sha> -->`.
 - When unsure, request changes. A false approval costs far more than a false rejection.
 
 Do not merge and do not push.

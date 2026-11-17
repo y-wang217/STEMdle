@@ -19,7 +19,7 @@ The repository has no `main` today: its default branch is `claude/dreamy-noether
 - [ ] Settings → Advanced Security: Dependabot alerts and security updates on.
 
 ## 3. Check it works
-- [ ] Open a throwaway PR that changes one line of copy. Expected: `gate` and `e2e` go green, then **Claude Reviewer** runs, posts one comment ending in `stemdle-review verdict=approve`, sets `review` to success, and the PR auto-merges.
+- [ ] Open a throwaway PR that changes one line of copy. Expected: `gate` and `e2e` go green, then **Claude Reviewer** runs, posts one comment ending in `pipeline-review verdict=approve`, sets `review` to success, and the PR auto-merges.
 - [ ] Open a throwaway PR that touches `supabase/migrations/`. Expected: same review, plus the `needs-human-merge` label and one "your move" comment mentioning you. It does not auto-merge.
 
 ## How it runs once set up

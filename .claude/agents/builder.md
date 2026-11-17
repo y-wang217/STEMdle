@@ -32,7 +32,7 @@ Risk is **High** when the change touches who can sign in or what an admin can do
 
 ## 4. CI and review loop
 - CI red: read the failing job's log (GitHub MCP `get_job_logs`), fix, push. At most 3 rounds, then the Blocked procedure.
-- The bot reviewer runs only after CI is green and posts one comment ending in `<!-- stemdle-review verdict=... -->`. On `verdict=changes`, address every numbered item with a commit (or a reply explaining why not) and push; the green CI run re-triggers the review.
+- The bot reviewer runs only after CI is green and posts one comment ending in `<!-- pipeline-review verdict=... -->`. On `verdict=changes`, address every numbered item with a commit (or a reply explaining why not) and push; the green CI run re-triggers the review.
 - On `verdict=approve` the workflow queues the auto-merge, or pings the owner when the PR needs a human merge. Either way your work is done: reply with one line (PR URL, verdict, merge lane) and stop.
 
 ## Blocked procedure

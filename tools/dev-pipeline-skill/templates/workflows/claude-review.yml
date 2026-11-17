@@ -1,0 +1,207 @@
+name: Claude Reviewer
+
+# From the dev-pipeline kit (modelled on y-wang217/ap-academy-landing). Runs after CI finishes on a pull request and
+# reviews only when CI is green. Its outcome is reported as a commit status
+# named `review` on the PR head (branch protection requires it, because a
+# workflow_run job is not listed as a PR check on its own).
+#
+# Differences from ap-academy-landing, so no bot account or PAT is needed:
+#  - The reviewer posts its verdict as a PR comment ending in a marker line
+#    `<!-- pipeline-review verdict=approve|changes sha=<sha> -->`; only comments
+#    written by a bot account count.
+#  - This workflow queues the auto-merge itself after an approve verdict,
+#    unless the PR touches `human_merge_paths` (.claude/pipeline.json) or
+#    carries `needs-human-merge`. Then it tells the owner the next move is theirs.
+#  - The builder is a cloud session subscribed to its PR, so a "changes"
+#    verdict reaches it as a PR event; there is no routine to kick.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to review
+        required: true
+
+concurrency:
+  group: claude-review-${{ github.event.workflow_run.head_branch || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Same-repository PR branches only (a workflow_run job carries secrets, so a
+    # fork must never reach the checkout below). Dependabot PRs are left to a human.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       !startsWith(github.event.workflow_run.head_branch, 'dependabot/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      statuses: write
+      actions: read
+      checks: read
+      id-token: write
+    steps:
+      - name: Resolve the PR and its CI state
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          INPUT_PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_run" ]; then
+            number="$RUN_PR"; sha="$RUN_SHA"
+            if [ -z "$number" ]; then
+              number=$(gh api "repos/$REPO/pulls?state=open&per_page=100" --jq ".[] | select(.head.ref == \"$RUN_BRANCH\") | .number" | head -1)
+            fi
+            [ "$RUN_CONCLUSION" = "success" ] && green=true || green=false
+          else
+            number="$INPUT_PR"
+            sha=$(gh api "repos/$REPO/pulls/$number" --jq .head.sha)
+            checks=$(gh pr checks "$number" --repo "$REPO" --json name,bucket || echo '[]')
+            passed=$(echo "$checks" | jq '[.[] | select(.name == "gate" or .name == "e2e") | select(.bucket == "pass")] | length')
+            failed=$(echo "$checks" | jq '[.[] | select(.name != "review") | select(.bucket == "fail" or .bucket == "cancel")] | length')
+            if [ "$passed" = "2" ] && [ "$failed" = "0" ]; then green=true; else green=false; fi
+          fi
+          draft=false
+          if [ -n "$number" ]; then
+            draft=$(gh api "repos/$REPO/pulls/$number" --jq .draft)
+          else
+            echo "No open PR for $RUN_BRANCH"; green=false
+          fi
+          [ "$draft" = "true" ] && green=false
+          { echo "number=$number"; echo "sha=$sha"; echo "green=$green"; } >> "$GITHUB_OUTPUT"
+          echo "PR #$number at $sha, green=$green, draft=$draft"
+
+      - name: Mark the review as waiting while CI is red
+        if: steps.pr.outputs.green != 'true' && steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state=pending -f context=review \
+            -f description="Waiting for green CI (and a non-draft PR) before the bot reviews" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.pr.outputs.number }}/checks"
+
+      - uses: actions/checkout@v4
+        if: steps.pr.outputs.green == 'true'
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Label PRs that touch human-merge paths
+        id: paths
+        if: steps.pr.outputs.green == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          # Prefix match of every changed file against human_merge_paths.
+          hits=$(gh api "repos/$REPO/pulls/$NUMBER/files?per_page=100" --paginate --jq '.[].filename' \
+            | node -e 'const p=require("./.claude/pipeline.json").human_merge_paths; const f=require("fs").readFileSync(0,"utf8").split("\n").filter(Boolean); console.log(f.filter(x=>p.some(q=>x.startsWith(q))).join(" "))')
+          if [ -n "$hits" ]; then
+            gh label create needs-human-merge --repo "$REPO" --color B60205 --description "A human merges this PR" 2>/dev/null || true
+            gh pr edit "$NUMBER" --repo "$REPO" --add-label needs-human-merge
+            echo "human-merge paths:$hits"
+          fi
+          labels=$(gh api "repos/$REPO/issues/$NUMBER/labels" --jq '.[].name' | tr '\n' ' ')
+          echo "labels=$labels" >> "$GITHUB_OUTPUT"
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.pr.outputs.green == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are the reviewer subagent. Follow .claude/agents/reviewer.md exactly.
+            Review PR #${{ steps.pr.outputs.number }} in ${{ github.repository }}.
+            CI (gate and e2e) is green on commit ${{ steps.pr.outputs.sha }}; do not ask for a green build.
+            Finish by posting exactly one PR comment with `gh pr comment ${{ steps.pr.outputs.number }} --body-file <file>`
+            whose last line is exactly
+            <!-- pipeline-review verdict=approve sha=${{ steps.pr.outputs.sha }} -->
+            or
+            <!-- pipeline-review verdict=changes sha=${{ steps.pr.outputs.sha }} -->
+          claude_args: >-
+            --max-turns 40
+            --allowedTools "Read,Glob,Grep,Write(/tmp/**),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report the verdict as the review status
+        id: verdict
+        if: always() && steps.pr.outputs.green == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Only bot-authored comments count, so nobody can approve by pasting the marker.
+          verdict=$(gh api "repos/$REPO/issues/$NUMBER/comments?per_page=100" --paginate \
+            --jq '.[] | select(.user.type == "Bot") | .body' \
+            | grep -oE "pipeline-review verdict=(approve|changes) sha=$SHA" | tail -1 | sed -E 's/.*verdict=([a-z]+).*/\1/' || true)
+          case "$verdict" in
+            approve) state=success; desc="Bot reviewer approved" ;;
+            changes) state=failure; desc="Bot reviewer requested changes" ;;
+            *) state=error; desc="Bot reviewer posted no verdict on this commit" ;;
+          esac
+          gh api "repos/$REPO/statuses/$SHA" -f state="$state" -f context=review -f description="$desc" -f target_url="$RUN_URL"
+          echo "review status: $state ($desc)"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          [ "$state" != "error" ]
+
+      - name: Queue auto-merge, or hand the merge to the owner
+        if: always() && steps.verdict.outputs.state == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          LABELS: ${{ steps.paths.outputs.labels }}
+        run: |
+          set -euo pipefail
+          if echo " $LABELS " | grep -q " needs-human-merge "; then
+            marker="<!-- pipeline-your-move $SHA -->"
+            if ! gh api "repos/$REPO/issues/$NUMBER/comments?per_page=100" --jq '.[].body' | grep -qF "$marker"; then
+              owner=$(jq -r '.owner_login' .claude/pipeline.json)
+              gh pr comment "$NUMBER" --repo "$REPO" --body "@$owner your move: the bot approved this PR, but it touches human-merge paths or is labelled \`needs-human-merge\`, so it waits for you to merge.
+          $marker"
+            fi
+          else
+            gh pr merge "$NUMBER" --repo "$REPO" --auto --squash --delete-branch
+          fi
+
+      - name: Notify the owner at the review round cap
+        if: always() && steps.verdict.outputs.state == 'failure'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          cap=$(jq -r '.review_round_cap // 3' .claude/pipeline.json)
+          rounds=$(gh api "repos/$REPO/issues/$NUMBER/comments?per_page=100" --paginate \
+            --jq '.[] | select(.user.type == "Bot") | .body' | grep -c "pipeline-review verdict=changes" || true)
+          echo "changes rounds on #$NUMBER: $rounds (cap $cap)"
+          if [ "$rounds" -ge "$cap" ]; then
+            owner=$(jq -r '.owner_login' .claude/pipeline.json)
+            gh pr comment "$NUMBER" --repo "$REPO" --body "@$owner the bot reviewer has requested changes $rounds times on this PR. The next move is yours.
+          <!-- pipeline-review-cap $SHA -->"
+          fi

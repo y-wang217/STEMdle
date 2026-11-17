@@ -31,7 +31,7 @@ const code = changedFiles();
 if (code.length === 0) process.exit(0);
 
 // The suites need the local Postgres; start it if this session has not.
-try { sh("scripts/local-postgres.sh"); } catch {}
+if (existsSync(join(root, "scripts", "local-postgres.sh"))) { try { sh("scripts/local-postgres.sh"); } catch {} }
 
 const failures = [];
 for (const cmd of cfg.gate_commands) {

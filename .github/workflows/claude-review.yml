@@ -7,7 +7,7 @@ name: Claude Reviewer
 #
 # Differences from ap-academy-landing, so no bot account or PAT is needed:
 #  - The reviewer posts its verdict as a PR comment ending in a marker line
-#    `<!-- stemdle-review verdict=approve|changes sha=<sha> -->`; only comments
+#    `<!-- pipeline-review verdict=approve|changes sha=<sha> -->`; only comments
 #    written by a bot account count.
 #  - This workflow queues the auto-merge itself after an approve verdict,
 #    unless the PR touches `human_merge_paths` (.claude/pipeline.json) or
@@ -130,9 +130,9 @@ jobs:
             CI (gate and e2e) is green on commit ${{ steps.pr.outputs.sha }}; do not ask for a green build.
             Finish by posting exactly one PR comment with `gh pr comment ${{ steps.pr.outputs.number }} --body-file <file>`
             whose last line is exactly
-            <!-- stemdle-review verdict=approve sha=${{ steps.pr.outputs.sha }} -->
+            <!-- pipeline-review verdict=approve sha=${{ steps.pr.outputs.sha }} -->
             or
-            <!-- stemdle-review verdict=changes sha=${{ steps.pr.outputs.sha }} -->
+            <!-- pipeline-review verdict=changes sha=${{ steps.pr.outputs.sha }} -->
           claude_args: >-
             --max-turns 40
             --allowedTools "Read,Glob,Grep,Write(/tmp/**),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
@@ -153,7 +153,7 @@ jobs:
           # Only bot-authored comments count, so nobody can approve by pasting the marker.
           verdict=$(gh api "repos/$REPO/issues/$NUMBER/comments?per_page=100" --paginate \
             --jq '.[] | select(.user.type == "Bot") | .body' \
-            | grep -oE "stemdle-review verdict=(approve|changes) sha=$SHA" | tail -1 | sed -E 's/.*verdict=([a-z]+).*/\1/' || true)
+            | grep -oE "pipeline-review verdict=(approve|changes) sha=$SHA" | tail -1 | sed -E 's/.*verdict=([a-z]+).*/\1/' || true)
           case "$verdict" in
             approve) state=success; desc="Bot reviewer approved" ;;
             changes) state=failure; desc="Bot reviewer requested changes" ;;
@@ -176,7 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           if echo " $LABELS " | grep -q " needs-human-merge "; then
-            marker="<!-- stemdle-your-move $SHA -->"
+            marker="<!-- pipeline-your-move $SHA -->"
             if ! gh api "repos/$REPO/issues/$NUMBER/comments?per_page=100" --jq '.[].body' | grep -qF "$marker"; then
               owner=$(jq -r '.owner_login' .claude/pipeline.json)
               gh pr comment "$NUMBER" --repo "$REPO" --body "@$owner your move: the bot approved this PR, but it touches human-merge paths or is labelled \`needs-human-merge\`, so it waits for you to merge.
@@ -198,10 +198,10 @@ jobs:
           set -euo pipefail
           cap=$(jq -r '.review_round_cap // 3' .claude/pipeline.json)
           rounds=$(gh api "repos/$REPO/issues/$NUMBER/comments?per_page=100" --paginate \
-            --jq '.[] | select(.user.type == "Bot") | .body' | grep -c "stemdle-review verdict=changes" || true)
+            --jq '.[] | select(.user.type == "Bot") | .body' | grep -c "pipeline-review verdict=changes" || true)
           echo "changes rounds on #$NUMBER: $rounds (cap $cap)"
           if [ "$rounds" -ge "$cap" ]; then
             owner=$(jq -r '.owner_login' .claude/pipeline.json)
             gh pr comment "$NUMBER" --repo "$REPO" --body "@$owner the bot reviewer has requested changes $rounds times on this PR. The next move is yours.
-          <!-- stemdle-review-cap $SHA -->"
+          <!-- pipeline-review-cap $SHA -->"
           fi

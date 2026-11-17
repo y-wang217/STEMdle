@@ -1,0 +1,53 @@
+name: CI
+
+# Branch protection requires the `gate` and `e2e` jobs by name, and
+# claude-review.yml waits for both. `gate` must run every command in
+# .claude/pipeline.json gate_commands (the Stop hook runs the same set).
+# Adapt the REPLACE lines to the project; delete the blocks it does not need.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    # Optional: a Postgres for integration tests.
+    # services:
+    #   postgres:
+    #     image: postgres:16
+    #     env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: app_test }
+    #     ports: ["5432:5432"]
+    #     options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm projects: add `- uses: pnpm/action-setup@v4` here and use cache: pnpm.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Gate (same commands as gate_commands)
+        run: |
+          REPLACE_WITH_GATE_COMMANDS
+      - name: Production build
+        run: npm run build
+
+  # Browser tests. If the project has none yet, keep this job as a no-op so the
+  # `e2e` check exists, and add Playwright later.
+  e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Playwright
+        run: REPLACE_WITH_E2E_COMMAND || { echo "::warning::e2e failed once, retrying"; REPLACE_WITH_E2E_COMMAND; }
