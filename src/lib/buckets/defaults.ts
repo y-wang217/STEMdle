@@ -6,6 +6,31 @@
  */
 import { z } from "zod";
 
+/** One rung of the auto-judge solver ladder (cheapest first). */
+export const SolverRung = z.object({
+  /** "external" is the slot for a non-Anthropic model behind the Solver interface (registered at runtime). */
+  provider: z.enum(["anthropic", "external"]).default("anthropic"),
+  model: z.string().min(1),
+  effort: z.enum(["low", "medium", "high", "xhigh"]),
+  max_tokens: z.number().int().min(1000).max(64000).default(16000),
+});
+export type SolverRungT = z.infer<typeof SolverRung>;
+
+/** Automated difficulty judge for a slot. Absent → per-slot defaults (src/lib/factory/auto-judge-core.ts). */
+export const JudgeConfig = z
+  .object({
+    ladder: z.array(SolverRung).min(1).max(8),
+    /** Inclusive 1-based rung band: the lowest solving rung should fall inside it. */
+    target_rungs: z.tuple([z.number().int().min(1), z.number().int().min(1)]),
+    /** Inclusive player solve-rate band used once a question has enough plays. */
+    target_solve_rate: z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)]),
+  })
+  .refine((j) => j.target_rungs[0] <= j.target_rungs[1] && j.target_rungs[1] <= j.ladder.length, {
+    message: "target_rungs must be an ordered band within the ladder",
+  })
+  .refine((j) => j.target_solve_rate[0] <= j.target_solve_rate[1], { message: "target_solve_rate must be ordered" });
+export type JudgeConfigT = z.infer<typeof JudgeConfig>;
+
 export const GeneratorProfile = z.object({
   topic: z.string(),
   subtopics: z.array(z.string()),
@@ -23,6 +48,7 @@ export const GeneratorProfile = z.object({
   }),
   editorial_instructions: z.array(z.string()),
   model: z.string().nullable(),
+  judge: JudgeConfig.nullish(),
   procedural: z.object({
     difficulty: z.number(),
     template_weights: z.record(z.string(), z.number()),

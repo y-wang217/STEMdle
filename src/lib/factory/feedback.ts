@@ -51,12 +51,22 @@ export async function recordJudgment(args: {
   questionId: string;
   judgment: Judgment | "retracted";
   note?: string | null;
+  /**
+   * Record a difficulty judgment on a question that is already in a published
+   * challenge (calibration from real play). Status is never changed for published
+   * questions (recomputeStatus returns early); 'invalid' and 'retracted' are refused.
+   */
+  allowPublished?: boolean;
 }): Promise<{ status: string; judgment: Judgment | null; recorded: boolean }> {
   return sql.begin(async (tx) => {
     const [q] = await tx<{ id: string; current_version_id: string; generator_version_id: string | null }[]>`
       select id, current_version_id, generator_version_id from questions where id = ${args.questionId} for update`;
     if (!q) throw new HttpError(404, "question not found");
-    if (await isPublished(tx, q.id)) throw new HttpError(409, "question is part of a published challenge; use invalidation instead");
+    if (await isPublished(tx, q.id)) {
+      const difficultyOnly = args.judgment === "too_easy" || args.judgment === "just_right" || args.judgment === "too_hard";
+      if (!args.allowPublished || !difficultyOnly)
+        throw new HttpError(409, "question is part of a published challenge; use invalidation instead");
+    }
     const current = await effectiveJudgment(tx, q.id);
     const note = args.note?.trim() ? args.note.trim().slice(0, 2000) : null;
     const target = args.judgment === "retracted" ? null : args.judgment;

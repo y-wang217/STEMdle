@@ -43,12 +43,13 @@ export async function structured<T extends z.ZodType>(opts: {
   schema: T;
   effort: "low" | "medium" | "high" | "xhigh";
   maxTokens: number;
+  /** Server-side refusal fallbacks (default on). Off for blind-solve ladders, where the model identity matters. */
+  fallbacks?: boolean;
 }): Promise<{ data: z.infer<T>; usage: Record<string, unknown>; model: string }> {
   const stream = getClient().beta.messages.stream({
     model: opts.model,
     max_tokens: opts.maxTokens,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
+    ...(opts.fallbacks === false ? {} : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }),
     thinking: { type: "adaptive" },
     output_config: { effort: opts.effort, format: betaZodOutputFormat(opts.schema) },
     system: opts.system,
@@ -66,6 +67,29 @@ export async function structured<T extends z.ZodType>(opts: {
   }
   const data = opts.schema.parse(raw);
   return { data, usage: { ...msg.usage } as Record<string, unknown>, model: msg.model };
+}
+
+/** One blind solve on a specific model and effort (auto-judge ladder rung). No fallbacks: the rung must be this model. */
+export async function blindSolveOn(
+  model: string,
+  effort: "low" | "medium" | "high" | "xhigh",
+  maxTokens: number,
+  q: { statement: string; options: string[] },
+): Promise<BlindSolveResult & { usage: Record<string, unknown>; model: string }> {
+  const { data, usage, model: served } = await structured({
+    model,
+    system: BLIND_SOLVER_SYSTEM,
+    user: blindSolveUserPrompt(q),
+    schema: BlindSolve,
+    effort,
+    maxTokens,
+    fallbacks: false,
+  });
+  return { choice: "ABCD".indexOf(data.choice), confidence: data.confidence, concerns: data.concerns, usage, model: served };
+}
+
+export function blindSolveUserPrompt(q: { statement: string; options: string[] }): string {
+  return `${q.statement}\n\n${q.options.map((o, i) => `${"ABCD"[i]}. ${o}`).join("\n")}`;
 }
 
 export function anthropicProvider(modelOverride?: string | null): GeneratorProvider {
@@ -96,7 +120,7 @@ export function anthropicProvider(modelOverride?: string | null): GeneratorProvi
       const { data } = await structured({
         model,
         system: BLIND_SOLVER_SYSTEM,
-        user: `${q.statement}\n\n${q.options.map((o, i) => `${"ABCD"[i]}. ${o}`).join("\n")}`,
+        user: blindSolveUserPrompt(q),
         schema: BlindSolve,
         effort: "high",
         maxTokens: 32000,

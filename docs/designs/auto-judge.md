@@ -25,7 +25,7 @@ A judge that writes the **same** judgments through the **same** path (`recordJud
 - **AC4.** Running `autoJudge` on a validated procedural batch records judgments through `recordJudgment` by the disabled `auto-judge@mathdle.local` admin with an `AUTO-JUDGE` note; `just_right` questions become `approved`, others `reviewed`. Re-running judges nothing new and calls no solver.
 - **AC5.** With a cost cap smaller than the run needs, the run stops before exceeding it (`spentUsd ≤ costCapUsd`, `stopped = "cost_cap"`), and unjudged questions stay `ready`.
 - **AC6.** Once a question has ≥ `MIN_PLAYS_FOR_OVERRIDE` answers, its player solve rate decides the judgment (`AUTO-JUDGE [players]`), replacing a ladder judgment without calling any solver; below the threshold the ladder decides. Human judgments are not overridden.
-- **AC7.** An admin `POST /api/admin/auto-judge` with `{ batchId }` (or `{ slot }`) returns the run report; unauthenticated requests get 401.
+- **AC7.** An admin `POST /api/admin/auto-judge` with `{ batchId }` (or `{ slot }`) gets `202` and the run continues in the background (`after()`, like generation), ending in an `auto_judge_run` audit row with the counts and spend. Unauthenticated → 401; no batch/slot → 400; no `ANTHROPIC_API_KEY` → 400 and nothing runs.
 - **AC8.** No test calls the real API (`ANTHROPIC_API_KEY` is empty in the test env and every test injects stub solvers).
 
 ## Test plan
@@ -37,7 +37,7 @@ A judge that writes the **same** judgments through the **same** path (`recordJud
 | AC4 | tests/integration/auto-judge.test.ts › judges a procedural batch end to end; › is idempotent | integration |
 | AC5 | tests/unit/auto-judge.test.ts › budget refuses a call that would exceed the cap; tests/integration/auto-judge.test.ts › stops at the cost cap | unit + integration |
 | AC6 | tests/unit/auto-judge.test.ts › player data overrides the ladder at the threshold; tests/integration/auto-judge.test.ts › player solve rate overrides a ladder judgment | unit + integration |
-| AC7 | tests/e2e (existing admin auth) + route is a thin wrapper over `autoJudge`; checked by `npm run test:e2e` and typecheck | e2e/typecheck |
+| AC7 | tests/e2e/admin.spec.ts › admin pages and APIs require sign-in; › auto-judge route validates input and never runs without an API key; tests/integration/auto-judge.test.ts › judges a procedural batch end to end (audit row) | e2e + integration |
 | AC8 | vitest.config.ts sets `ANTHROPIC_API_KEY: ""`; all suites pass a `solverFactory` stub | config |
 
 ## Risks
@@ -58,6 +58,8 @@ A judge that writes the **same** judgments through the **same** path (`recordJud
 | Published questions in feedback | `recordJudgment({ allowPublished: true })` for difficulty judgments only | Played questions are always published; status is unaffected there. |
 | Flag trigger on concerns | Only the solving rung's concerns | Low-rung models over-report concerns; flooding review defeats the purpose. |
 | Default cost cap | $2 per run (env `AUTO_JUDGE_COST_CAP_USD`), route max $20 | Worst case for one question at the default ladder is ≈ $0.66. |
+| Route runs in the background | `202` + `after()`; report in `audit_log` | A ladder with Opus at high effort can outlast a synchronous 300 s function. |
+| Runner script | `npx tsx scripts/auto-judge.ts`, no npm script | `package.json` is a human-merge path; avoided for one alias. |
 | Risk / lane | High → `needs-human-merge` | New admin capability that can approve questions. |
 
 ## Follow-ups
