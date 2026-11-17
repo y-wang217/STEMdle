@@ -19,7 +19,7 @@ The player game works but reads as a plain form: the eight-slot progress row doe
   - Options expose `data-state` (`idle | picked | correct | wrong | dim`) and `aria-pressed` for the picked option. Picked shows a pending ring; correct gets a check icon and a soft pop; wrong gets a cross icon and a short shake. The correct option is only ever marked from the server's `correct` flag on the option the player chose, exactly as today (the client never learns which other option was right during play).
   - Option math sits in a `min-w-0` scroller so wide KaTeX scrolls inside the card instead of widening the page.
 - `src/components/game/Results.tsx`
-  - Score hero: verdict headline, big score, result pattern, and stat tiles (rank, time, streak-free) always visible instead of behind "Stats".
+  - Score hero: verdict headline, big score, result pattern, and stat tiles (rank, time) always visible instead of behind "Stats".
   - Share card (`data-testid="share-card"`): a preview of exactly what gets shared (`Mathdle #N · s/8` + the emoji pattern from `data.shareText`) with a full-width Share button. Share behaviour unchanged.
   - Tabs, nickname edit, "Just show me the answer", and the solution `<summary>` are ≥ 44px. Solution cards get a status pill and difficulty label. Leaderboard rows get more breathing room. No "practice more" entry point (the /practice session adds it).
 - `src/app/globals.css`
