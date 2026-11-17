@@ -46,3 +46,6 @@ __pycache__/
 /screenshots/tmp/
 /.next-e2e/
 /.next-build/
+
+# Claude pipeline state (block marker)
+/.claude/state/

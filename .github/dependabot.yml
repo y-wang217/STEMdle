@@ -1,0 +1,34 @@
+# Weekly dependency PRs. Dependabot branches start with `dependabot/`, so the
+# Claude reviewer skips them; a human merges each one after CI passes.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Toronto"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "needs-human-merge"]
+    groups:
+      npm-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: "pip"
+    directory: "/validator"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Toronto"
+    labels: ["dependencies", "needs-human-merge"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Toronto"
+    labels: ["dependencies", "needs-human-merge"]
