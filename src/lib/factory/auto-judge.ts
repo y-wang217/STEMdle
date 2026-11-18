@@ -15,7 +15,7 @@ import { HttpError } from "@/lib/http";
 import { audit } from "@/lib/audit";
 import { GeneratorProfile, type JudgeConfigT, type SolverRungT } from "@/lib/buckets/defaults";
 import { hashPassword, randomToken } from "@/lib/security/crypto";
-import { recomputeStatus, recordJudgment } from "./feedback";
+import { effectiveJudgment, recomputeStatus, recordJudgment } from "./feedback";
 import { Budget, MIN_PLAYS_FOR_OVERRIDE, ladderVerdict, playerVerdict, resolveJudgeConfig, runLadder, type LadderAttempt, type Verdict } from "./auto-judge-core";
 import { defaultSolverFactory } from "./providers/solvers";
 import type { Solver } from "./providers/types";
@@ -38,6 +38,8 @@ export interface AutoJudgeArgs {
   solverFactory?: SolverFactory;
   /** Admin who started the run (audited). Null for scripts. */
   triggeredBy?: string | null;
+  /** Milliseconds from now after which no new solver call starts (serverless time limit). */
+  deadlineMs?: number;
 }
 
 export interface AutoJudgeItem {
@@ -54,7 +56,9 @@ export interface AutoJudgeReport {
   judgeAdminId: string;
   costCapUsd: number;
   spentUsd: number;
-  stopped: "cost_cap" | null;
+  stopped: "cost_cap" | "deadline" | null;
+  /** Set when the run itself failed; the items list what was done before it. */
+  error?: string;
   items: AutoJudgeItem[];
   counts: Record<AutoJudgeItem["outcome"], number>;
 }
@@ -108,6 +112,7 @@ async function playerCandidates(judgeId: string, slot: number | null, batchId: s
 
 interface LadderCandidate {
   id: string;
+  version_id: string;
   slot: number;
   statement: string;
   options: { tex: string; is_correct: boolean }[];
@@ -117,7 +122,7 @@ interface LadderCandidate {
 async function ladderCandidates(slot: number | null, batchId: string | null, limit: number): Promise<LadderCandidate[]> {
   if (limit <= 0) return [];
   return sql<LadderCandidate[]>`
-    select q.id, q.slot, v.statement,
+    select q.id, v.id as version_id, q.slot, v.statement,
       (select json_agg(json_build_object('tex', o.tex, 'is_correct', o.is_correct) order by o.position)
          from question_options o where o.question_version_id = v.id) as options
     from questions q join question_versions v on v.id = q.current_version_id
@@ -129,10 +134,25 @@ async function ladderCandidates(slot: number | null, batchId: string | null, lim
     limit ${limit}`;
 }
 
-/** Append a needs_review validation for the current version so a human checks the math. */
-async function flagForReview(judgeId: string, questionId: string, reason: string, attempts: LadderAttempt[]) {
-  await sql.begin(async (tx) => {
-    const [q] = await tx<{ current_version_id: string }[]>`select current_version_id from questions where id = ${questionId} for update`;
+/**
+ * The ladder's evidence is minutes old by the time it is written. Write only if the
+ * question is still exactly what the solvers saw: same version, still `ready`, and
+ * nobody (human or otherwise) has judged it meanwhile.
+ */
+function staleLadderReason(q: { current_version_id: string; status: string; judgment: string | null }, versionId: string): string | null {
+  if (q.current_version_id !== versionId) return "question was edited during the run";
+  if (q.judgment !== null) return `question was judged (${q.judgment}) during the run`;
+  if (q.status !== "ready") return `question became ${q.status} during the run`;
+  return null;
+}
+
+/** Append a needs_review validation for the current version so a human checks the math. Returns a skip reason, or null. */
+async function flagForReview(judgeId: string, questionId: string, versionId: string, reason: string, attempts: LadderAttempt[]): Promise<string | null> {
+  return sql.begin(async (tx) => {
+    const [q] = await tx<{ current_version_id: string; status: string }[]>`
+      select current_version_id, status from questions where id = ${questionId} for update`;
+    const stale = staleLadderReason({ ...q, judgment: await effectiveJudgment(tx, questionId) }, versionId);
+    if (stale) return stale;
     const [prev] = await tx<{ checks: unknown[]; computed: unknown }[]>`
       select checks, computed from question_validations where question_version_id = ${q.current_version_id}
       order by created_at desc limit 1`;
@@ -141,12 +161,33 @@ async function flagForReview(judgeId: string, questionId: string, reason: string
              values (${q.current_version_id}, 'needs_review', 'auto-judge', ${tx.json(checks as never)}, ${tx.json((prev?.computed ?? {}) as never)})`;
     await recomputeStatus(tx, questionId);
     await audit(tx, judgeId, "auto_judge_flag", "question", questionId, { reason, attempts } as never);
+    return null;
   });
 }
 
-async function record(judgeId: string, questionId: string, v: Extract<Verdict, { kind: "judgment" }>, allowPublished: boolean) {
-  const note = `${NOTE_PREFIX[v.source]} automated judgment: ${v.detail}`;
-  await recordJudgment({ adminId: judgeId, questionId, judgment: v.judgment, note, allowPublished });
+/** Record a ladder judgment unless the question changed under the run. Returns a skip reason, or null. */
+async function recordLadder(judgeId: string, questionId: string, versionId: string, v: Extract<Verdict, { kind: "judgment" }>) {
+  const r = await recordJudgment({
+    adminId: judgeId,
+    questionId,
+    judgment: v.judgment,
+    note: `${NOTE_PREFIX.ladder} automated judgment: ${v.detail}`,
+    precondition: async (_tx, q) => staleLadderReason(q, versionId),
+  });
+  return r.skipped ?? null;
+}
+
+/** Record a player-data judgment unless a human judged the question meanwhile. Returns a skip reason, or null. */
+async function recordPlayers(judgeId: string, questionId: string, v: Extract<Verdict, { kind: "judgment" }>) {
+  const r = await recordJudgment({
+    adminId: judgeId,
+    questionId,
+    judgment: v.judgment,
+    note: `${NOTE_PREFIX.players} automated judgment: ${v.detail}`,
+    allowPublished: true,
+    precondition: async (_tx, q) => (q.latestAdminId !== null && q.latestAdminId !== judgeId ? "a human judged it during the run" : null),
+  });
+  return r.skipped ?? null;
 }
 
 export async function autoJudge(args: AutoJudgeArgs): Promise<AutoJudgeReport> {
@@ -156,72 +197,96 @@ export async function autoJudge(args: AutoJudgeArgs): Promise<AutoJudgeReport> {
   const limit = Math.max(0, Math.min(MAX_LIMIT, Math.floor(args.limit ?? 10)));
   const capUsd = args.costCapUsd ?? Number(process.env.AUTO_JUDGE_COST_CAP_USD ?? DEFAULT_COST_CAP_USD);
   if (!(capUsd >= 0)) throw new HttpError(400, "cost cap must be a non-negative number");
+  const deadline = args.deadlineMs !== undefined ? Date.now() + args.deadlineMs : undefined;
   const factory = args.solverFactory ?? defaultSolverFactory;
-  const judgeId = await ensureAutoJudgeAdmin();
   const budget = new Budget(capUsd);
   const items: AutoJudgeItem[] = [];
-
-  const players = await playerCandidates(judgeId, slot, batchId);
-  const ladder = await ladderCandidates(slot, batchId, limit);
-  const configs = await judgeConfigs([...new Set([...players.map((p) => p.slot), ...ladder.map((q) => q.slot)])]);
-
-  // 1. Real play beats the ladder. A repeat of the same player-based judgment is not re-recorded.
-  for (const p of players) {
-    const v = playerVerdict(p, configs.get(p.slot)!);
-    if (!v || v.kind !== "judgment") continue;
-    if (p.judgment === v.judgment && p.note?.startsWith(NOTE_PREFIX.players)) continue;
-    await record(judgeId, p.id, v, true);
-    items.push({ questionId: p.id, slot: p.slot, outcome: "judged", judgment: v.judgment, source: "players", detail: v.detail, costUsd: 0 });
-  }
-
-  // 2. Model ladder, a few questions at a time, under the shared budget.
-  const solversBySlot = new Map<number, Solver[]>();
-  const solversFor = (s: number) => {
-    if (!solversBySlot.has(s)) solversBySlot.set(s, configs.get(s)!.ladder.map((rung, i) => factory(rung, i)));
-    return solversBySlot.get(s)!;
-  };
   let stopped: AutoJudgeReport["stopped"] = null;
-  const queue = [...ladder];
-  const worker = async () => {
-    for (let q = queue.shift(); q && !stopped; q = queue.shift()) {
-      const correct = q.options.findIndex((o) => o.is_correct);
+  let judgeId = "";
+  let runError: string | undefined;
+
+  const counts = () => {
+    const c = { judged: 0, flagged: 0, skipped: 0, unjudged: 0 };
+    for (const i of items) c[i.outcome]++;
+    return c;
+  };
+
+  try {
+    judgeId = await ensureAutoJudgeAdmin();
+    const players = await playerCandidates(judgeId, slot, batchId);
+    const ladder = await ladderCandidates(slot, batchId, limit);
+    const configs = await judgeConfigs([...new Set([...players.map((p) => p.slot), ...ladder.map((q) => q.slot)])]);
+
+    // 1. Real play beats the ladder. A repeat of the same player-based judgment is not re-recorded.
+    for (const p of players) {
+      const v = playerVerdict(p, configs.get(p.slot)!);
+      if (!v || v.kind !== "judgment") continue;
+      if (p.judgment === v.judgment && p.note?.startsWith(NOTE_PREFIX.players)) continue;
+      const skipped = await recordPlayers(judgeId, p.id, v);
+      items.push(
+        skipped
+          ? { questionId: p.id, slot: p.slot, outcome: "skipped", detail: skipped, costUsd: 0 }
+          : { questionId: p.id, slot: p.slot, outcome: "judged", judgment: v.judgment, source: "players", detail: v.detail, costUsd: 0 },
+      );
+    }
+
+    // 2. Model ladder, a few questions at a time, under the shared budget and deadline.
+    const solversBySlot = new Map<number, Solver[]>();
+    const solversFor = (s: number) => {
+      if (!solversBySlot.has(s)) solversBySlot.set(s, configs.get(s)!.ladder.map((rung, i) => factory(rung, i)));
+      return solversBySlot.get(s)!;
+    };
+    const judgeOne = async (q: LadderCandidate): Promise<AutoJudgeItem> => {
+      const base = { questionId: q.id, slot: q.slot };
       let solvers: Solver[];
       try {
         solvers = solversFor(q.slot);
       } catch (e) {
-        items.push({ questionId: q.id, slot: q.slot, outcome: "skipped", detail: `solver unavailable: ${(e as Error).message}`, costUsd: 0 });
-        continue;
+        return { ...base, outcome: "skipped", detail: `solver unavailable: ${(e as Error).message}`, costUsd: 0 };
       }
-      const run = await runLadder({ statement: q.statement, options: q.options.map((o) => o.tex) }, correct, solvers, budget);
+      const correct = q.options.findIndex((o) => o.is_correct);
+      const run = await runLadder({ statement: q.statement, options: q.options.map((o) => o.tex) }, correct, solvers, budget, { deadline });
       const cost = run.attempts.reduce((a, b) => a + b.costUsd, 0);
       if (run.stopped) {
-        stopped = run.stopped;
-        items.push({ questionId: q.id, slot: q.slot, outcome: "unjudged", detail: "per-run cost cap reached", costUsd: cost });
-        break;
+        stopped ??= run.stopped;
+        return { ...base, outcome: "unjudged", detail: run.stopped === "cost_cap" ? "per-run cost cap reached" : "run deadline reached", costUsd: cost };
       }
-      if (run.error) {
-        items.push({ questionId: q.id, slot: q.slot, outcome: "skipped", detail: `solver error, left for the next run: ${run.error}`, costUsd: cost });
-        continue;
-      }
+      if (run.error) return { ...base, outcome: "skipped", detail: `solver error, left for the next run: ${run.error}`, costUsd: cost };
       const v = ladderVerdict(run.attempts, configs.get(q.slot)!);
       if (v.kind === "flag") {
-        await flagForReview(judgeId, q.id, v.reason, run.attempts);
-        items.push({ questionId: q.id, slot: q.slot, outcome: "flagged", detail: v.reason, costUsd: cost });
-      } else {
-        await record(judgeId, q.id, v, false);
-        await audit(sql, judgeId, "auto_judge", "question", q.id, { judgment: v.judgment, attempts: run.attempts } as never);
-        items.push({ questionId: q.id, slot: q.slot, outcome: "judged", judgment: v.judgment, source: "ladder", detail: v.detail, costUsd: cost });
+        const stale = await flagForReview(judgeId, q.id, q.version_id, v.reason, run.attempts);
+        return stale ? { ...base, outcome: "skipped", detail: `not flagged: ${stale}`, costUsd: cost } : { ...base, outcome: "flagged", detail: v.reason, costUsd: cost };
       }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
-
-  const counts = { judged: 0, flagged: 0, skipped: 0, unjudged: 0 };
-  for (const i of items) counts[i.outcome]++;
-  const report: AutoJudgeReport = { judgeAdminId: judgeId, costCapUsd: capUsd, spentUsd: round4(budget.spentUsd), stopped, items, counts };
-  if (args.triggeredBy)
-    await audit(sql, args.triggeredBy, "auto_judge_run", "auto_judge_run", null, { slot, batchId, ...counts, spentUsd: report.spentUsd, costCapUsd: capUsd, stopped });
-  return report;
+      const stale = await recordLadder(judgeId, q.id, q.version_id, v);
+      if (stale) return { ...base, outcome: "skipped", detail: `not recorded: ${stale}`, costUsd: cost };
+      await audit(sql, judgeId, "auto_judge", "question", q.id, { judgment: v.judgment, attempts: run.attempts } as never);
+      return { ...base, outcome: "judged", judgment: v.judgment, source: "ladder", detail: v.detail, costUsd: cost };
+    };
+    const queue = [...ladder];
+    const worker = async () => {
+      for (let q = queue.shift(); q && !stopped; q = queue.shift()) {
+        // One question's failure (e.g. a database error while writing) never takes down the others.
+        items.push(await judgeOne(q).catch((e): AutoJudgeItem => ({ questionId: q.id, slot: q.slot, outcome: "skipped", detail: `error: ${(e as Error).message}`, costUsd: 0 })));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+  } catch (e) {
+    runError = (e as Error).message;
+    throw e;
+  } finally {
+    // Always leave a record of the run, including partial work, spend and any failure.
+    if (args.triggeredBy)
+      await audit(sql, args.triggeredBy, "auto_judge_run", "auto_judge_run", null, {
+        slot,
+        batchId,
+        ...counts(),
+        spentUsd: round4(budget.spentUsd),
+        costCapUsd: capUsd,
+        stopped,
+        error: runError ?? null,
+      }).catch((e) => console.error("[mathdle] could not audit auto-judge run", e));
+  }
+  return { judgeAdminId: judgeId, costCapUsd: capUsd, spentUsd: round4(budget.spentUsd), stopped, items, counts: counts() };
 }
 
 function round4(x: number) {

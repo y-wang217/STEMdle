@@ -5,8 +5,16 @@ import { adminRoute } from "@/lib/admin/route";
 import { enforceRateLimit } from "@/lib/ratelimit";
 import { DEFAULT_COST_CAP_USD, autoJudge } from "@/lib/factory/auto-judge";
 
-// The response returns immediately; this is the budget for the background run.
+// The response returns immediately, but after() still runs inside this limit
+// (node_modules/next/dist/docs/01-app/03-api-reference/04-functions/after.md, "Duration").
 export const maxDuration = 300;
+
+/**
+ * No new solver call starts after this. The slowest rung (Opus at high effort, up
+ * to 32k output tokens) can take a couple of minutes, so leave that much headroom
+ * before maxDuration. Questions not reached stay `ready` for the next run.
+ */
+const RUN_DEADLINE_MS = 150_000;
 
 /** Highest per-run cost cap an admin can request from the browser. */
 const MAX_COST_CAP_USD = 20;
@@ -22,8 +30,8 @@ const Body = z
 
 /**
  * Judge one batch (or the oldest unjudged questions of a slot) with the model
- * ladder. Runs after the response; the result is written to the audit log as
- * `auto_judge_run`, and judgments appear in the review UI as AUTO-JUDGE notes.
+ * ladder. Runs after the response under a deadline; the result (including a
+ * partial or failed run) is written to the audit log as `auto_judge_run`, and judgments appear in the review UI as AUTO-JUDGE notes.
  */
 export const POST = adminRoute(async (req, admin) => {
   const body = Body.parse(await readJson(req));
@@ -31,7 +39,8 @@ export const POST = adminRoute(async (req, admin) => {
   await enforceRateLimit(`auto-judge:${admin.id}`, Number(process.env.AUTO_JUDGE_RATE_LIMIT_PER_HOUR ?? 6), 3600);
   const costCapUsd = Math.min(MAX_COST_CAP_USD, body.costCapUsd ?? Number(process.env.AUTO_JUDGE_COST_CAP_USD ?? DEFAULT_COST_CAP_USD));
   after(async () => {
-    await autoJudge({ batchId: body.batchId, slot: body.slot, limit: body.limit, costCapUsd, triggeredBy: admin.id }).catch((e) =>
+    // autoJudge writes its `auto_judge_run` audit row in a finally block, so a failed run is recorded too.
+    await autoJudge({ batchId: body.batchId, slot: body.slot, limit: body.limit, costCapUsd, triggeredBy: admin.id, deadlineMs: RUN_DEADLINE_MS }).catch((e) =>
       console.error("[mathdle] auto-judge", (e as Error).message),
     );
   });

@@ -14,6 +14,7 @@ import {
   type LadderAttempt,
 } from "@/lib/factory/auto-judge-core";
 import type { Solver, SolverQuestion } from "@/lib/factory/providers/types";
+import { anthropicSolver, costUsd } from "@/lib/factory/providers/solvers";
 
 const Q: SolverQuestion = { statement: "What is 2 + 2?", options: ["3", "4", "5", "22"] };
 const CORRECT = 1;
@@ -123,6 +124,13 @@ describe("runLadder", () => {
     expect(budget.spentUsd).toBeLessThanOrEqual(0.12);
   });
 
+  it("starts no rung after the run deadline", async () => {
+    const calls: string[] = [];
+    const r = await runLadder(Q, CORRECT, [stub("haiku", 0, calls), stub("sonnet", CORRECT, calls)], new Budget(1), { deadline: Date.now() - 1 });
+    expect(calls).toEqual([]);
+    expect(r.stopped).toBe("deadline");
+  });
+
   it("Budget never lets reservations exceed the cap", () => {
     const b = new Budget(1);
     expect(b.tryReserve(0.6)).toBe(true);
@@ -130,6 +138,24 @@ describe("runLadder", () => {
     b.settle(0.6, 0.2);
     expect(b.spentUsd).toBeCloseTo(0.2);
     expect(b.tryReserve(0.8)).toBe(true);
+  });
+});
+
+describe("solver pricing", () => {
+  it("bills cache writes at 1.25x and cache reads at 0.1x the input price", () => {
+    // Opus 5.5: $4 / $20 per MTok.
+    expect(costUsd("claude-opus-5-5", 1_000_000, 0)).toBeCloseTo(4);
+    expect(costUsd("claude-opus-5-5", 0, 0, { write: 1_000_000 })).toBeCloseTo(5);
+    expect(costUsd("claude-opus-5-5", 0, 0, { read: 1_000_000 })).toBeCloseTo(0.4);
+    expect(costUsd("claude-opus-5-5", 0, 1_000_000)).toBeCloseTo(20);
+    expect(() => costUsd("unknown-model", 1, 1)).toThrow(/no price/);
+  });
+
+  it("worst case for one question at the default ladder is about $1.13", () => {
+    const q = { statement: "x".repeat(300), options: ["1", "2", "3", "4"] };
+    const total = defaultJudgeConfig(1).ladder.reduce((sum, rung) => sum + anthropicSolver(rung).worstCaseCostUsd(q), 0);
+    expect(total).toBeGreaterThan(1.1);
+    expect(total).toBeLessThan(1.2);
   });
 });
 

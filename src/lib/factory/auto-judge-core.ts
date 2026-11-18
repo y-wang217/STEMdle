@@ -147,17 +147,25 @@ export class Budget {
 
 export interface LadderRun {
   attempts: LadderAttempt[];
-  /** Set when the budget refused the next call; the question must stay unjudged. */
-  stopped?: "cost_cap";
+  /** Set when the budget refused the next call or the run's deadline passed; the question must stay unjudged. */
+  stopped?: "cost_cap" | "deadline";
   /** Set when a solver call failed; the question must stay unjudged. */
   error?: string;
 }
 
 /** Solve blind, cheapest rung first, stopping at the first rung that picks the validated answer. */
-export async function runLadder(q: SolverQuestion, correctIndex: number, solvers: Solver[], budget: Budget): Promise<LadderRun> {
+export async function runLadder(
+  q: SolverQuestion,
+  correctIndex: number,
+  solvers: Solver[],
+  budget: Budget,
+  opts: { deadline?: number } = {},
+): Promise<LadderRun> {
   const attempts: LadderAttempt[] = [];
   for (let i = 0; i < solvers.length; i++) {
     const solver = solvers[i];
+    // No new rung once the run's time budget is spent (a rung can take minutes).
+    if (opts.deadline !== undefined && Date.now() >= opts.deadline) return { attempts, stopped: "deadline" };
     const worst = solver.worstCaseCostUsd(q);
     if (!budget.tryReserve(worst)) return { attempts, stopped: "cost_cap" };
     try {

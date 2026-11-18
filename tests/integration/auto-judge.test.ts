@@ -8,6 +8,7 @@ import { runGenerationBatch } from "@/lib/factory/pipeline";
 import { AUTO_JUDGE_EMAIL, autoJudge, type SolverFactory } from "@/lib/factory/auto-judge";
 import { MIN_PLAYS_FOR_OVERRIDE } from "@/lib/factory/auto-judge-core";
 import type { Solver } from "@/lib/factory/providers/types";
+import { recordJudgment } from "@/lib/factory/feedback";
 import { approvedQuestion, newPlayer, resetDb } from "../helpers";
 
 let adminId: string;
@@ -115,6 +116,49 @@ describe("auto-judge (stubbed solvers)", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("never overwrites a judgment a human makes while the ladder is running", async () => {
+    const s = await runGenerationBatch({ slot: 1, count: 2, providerId: "procedural", adminId, seed: 9191 });
+    const key = await answerKey(s.batchId);
+    const [a, b] = key;
+    // a would be judged 'just right'; b would be flagged (no rung solves it).
+    const plans = new Map<string, Plan>([[a.statement, { solveAt: 1 }], [b.statement, { solveAt: 0 }]]);
+    const human = new Map([[a.id, "invalid" as const], [b.id, "too_hard" as const]]);
+    const inner = scriptedFactory(key, plans, []);
+    const judgedMidRun = new Set<string>();
+    // The editor judges each question while its first solver call is in flight.
+    const factory: SolverFactory = (rung, index) => {
+      const solver = inner(rung, index);
+      return {
+        ...solver,
+        async solve(q) {
+          const k = key.find((x) => x.statement === q.statement)!;
+          if (!judgedMidRun.has(k.id)) {
+            judgedMidRun.add(k.id);
+            await recordJudgment({ adminId, questionId: k.id, judgment: human.get(k.id)! });
+          }
+          return solver.solve(q);
+        },
+      };
+    };
+    const report = await autoJudge({ batchId: s.batchId, solverFactory: factory, costCapUsd: 1 });
+    expect(report.counts).toMatchObject({ judged: 0, flagged: 0, skipped: 2 });
+    for (const i of report.items) expect(i.detail).toMatch(/judged .* during the run/);
+
+    const latest = async (id: string) =>
+      (await sql<{ judgment: string; email: string }[]>`
+        select f.judgment, a.email from question_feedback f join admin_users a on a.id = f.admin_id
+        where f.question_id = ${id} order by f.created_at desc, f.id desc limit 1`)[0];
+    expect(await latest(a.id)).toEqual({ judgment: "invalid", email: "t@test" });
+    expect(await latest(b.id)).toEqual({ judgment: "too_hard", email: "t@test" });
+    const st = new Map((await statuses(s.batchId)).map((q) => [q.id, q.status]));
+    expect(st.get(a.id)).toBe("rejected");
+    expect(st.get(b.id)).toBe("reviewed");
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from question_validations qv join questions q on q.current_version_id = qv.question_version_id
+      where q.id = ${b.id} and qv.engine = 'auto-judge'`;
+    expect(n).toBe(0);
+  });
+
   it("stops at the cost cap and leaves unjudged questions ready", async () => {
     const s = await runGenerationBatch({ slot: 1, count: 3, providerId: "procedural", adminId, seed: 777 });
     const key = await answerKey(s.batchId);
@@ -127,6 +171,18 @@ describe("auto-judge (stubbed solvers)", () => {
     const st = await statuses(s.batchId);
     expect(st.filter((q) => q.status === "approved")).toHaveLength(2);
     expect(st.filter((q) => q.status === "ready")).toHaveLength(1);
+  });
+
+  it("stops at the run deadline and still writes the audit row", async () => {
+    // One slot-1 question is still ready after the cost-cap test.
+    const calls: string[] = [];
+    const report = await autoJudge({ slot: 1, solverFactory: scriptedFactory([], new Map(), calls), costCapUsd: 1, deadlineMs: 0, triggeredBy: adminId });
+    expect(report.stopped).toBe("deadline");
+    expect(calls).toHaveLength(0);
+    expect(report.counts.unjudged).toBe(1);
+    const [a] = await sql<{ details: Record<string, unknown> }[]>`
+      select details from audit_log where action = 'auto_judge_run' order by created_at desc limit 1`;
+    expect(a.details).toMatchObject({ stopped: "deadline", unjudged: 1, spentUsd: 0, error: null });
   });
 
   it("player solve rate overrides a ladder judgment once there are enough plays", async () => {
@@ -179,6 +235,11 @@ describe("auto-judge (stubbed solvers)", () => {
     // Published question status is untouched.
     const [{ status }] = await sql<{ status: string }[]>`select status from questions where id = ${cq.question_id}`;
     expect(status).toBe("approved");
+
+    // allowPublished only admits difficulty judgments; invalidation keeps its own path.
+    for (const judgment of ["invalid", "retracted"] as const)
+      await expect(recordJudgment({ adminId, questionId: cq.question_id, judgment, allowPublished: true })).rejects.toMatchObject({ status: 409 });
+    await expect(recordJudgment({ adminId, questionId: cq.question_id, judgment: "too_easy" })).rejects.toMatchObject({ status: 409 });
 
     // Running again with the same data records nothing new.
     report = await autoJudge({ slot: 1, solverFactory: neverCalled, costCapUsd: 1 });

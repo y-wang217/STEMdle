@@ -8,7 +8,11 @@ import { BLIND_SOLVER_SYSTEM } from "../prompts";
 import { blindSolveOn, blindSolveUserPrompt } from "./anthropic";
 import type { Solver, SolverQuestion } from "./types";
 
-/** List prices, USD per million tokens (input, output). A model without a price cannot be capped, so it is refused. */
+/**
+ * List prices, USD per million tokens (input, output), from Anthropic's published
+ * model pricing table as of 2026-11 (Claude API, prompts under 100K tokens).
+ * A model without a price cannot be capped, so it is refused.
+ */
 export const SOLVER_PRICES: Record<string, { input: number; output: number }> = {
   "claude-haiku-5-5": { input: 0.1, output: 0.5 },
   "claude-sonnet-5-5": { input: 2, output: 10 },
@@ -20,10 +24,20 @@ export function estimateInputTokens(q: SolverQuestion): number {
   return Math.ceil((BLIND_SOLVER_SYSTEM.length + blindSolveUserPrompt(q).length) / 3) + 500;
 }
 
-export function costUsd(model: string, inputTokens: number, outputTokens: number): number {
+/** Prompt-cache multipliers on the base input price (5-minute cache write, cache read). */
+export const CACHE_WRITE_MULTIPLIER = 1.25;
+export const CACHE_READ_MULTIPLIER = 0.1;
+
+export function costUsd(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cache: { write?: number; read?: number } = {},
+): number {
   const p = SOLVER_PRICES[model];
   if (!p) throw new Error(`no price for solver model ${model}; add it to SOLVER_PRICES`);
-  return (inputTokens * p.input + outputTokens * p.output) / 1e6;
+  const input = inputTokens + (cache.write ?? 0) * CACHE_WRITE_MULTIPLIER + (cache.read ?? 0) * CACHE_READ_MULTIPLIER;
+  return (input * p.input + outputTokens * p.output) / 1e6;
 }
 
 const num = (x: unknown) => (typeof x === "number" ? x : 0);
@@ -35,8 +49,11 @@ export function anthropicSolver(rung: SolverRungT): Solver {
     worstCaseCostUsd: (q) => costUsd(rung.model, estimateInputTokens(q), rung.max_tokens),
     async solve(q) {
       const r = await blindSolveOn(rung.model, rung.effort, rung.max_tokens, q);
-      const input = num(r.usage.input_tokens) + num(r.usage.cache_creation_input_tokens) + num(r.usage.cache_read_input_tokens);
-      return { choice: r.choice, confidence: r.confidence, concerns: r.concerns, model: r.model, costUsd: costUsd(rung.model, input, num(r.usage.output_tokens)) };
+      const cost = costUsd(rung.model, num(r.usage.input_tokens), num(r.usage.output_tokens), {
+        write: num(r.usage.cache_creation_input_tokens),
+        read: num(r.usage.cache_read_input_tokens),
+      });
+      return { choice: r.choice, confidence: r.confidence, concerns: r.concerns, model: r.model, costUsd: cost };
     },
   };
 }
