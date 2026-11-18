@@ -14,8 +14,19 @@ test("admin pages and APIs require sign-in (acceptance 15)", async ({ page, requ
   await expect(page).toHaveURL(/\/admin\/login/);
   const r = await request.post("/api/admin/buckets/1/generate", { headers: { Origin: "http://localhost:3100" }, data: { count: 1, provider: "procedural" } });
   expect(r.status()).toBe(401);
+  const judge = await request.post("/api/admin/auto-judge", { headers: { Origin: "http://localhost:3100" }, data: { slot: 1 } });
+  expect(judge.status()).toBe(401);
   const bad = await request.post("/api/admin/login", { headers: { Origin: "http://localhost:3100" }, data: { email: "e2e@mathdle.test", password: "wrong" } });
   expect(bad.status()).toBe(401);
+});
+
+test("auto-judge route validates input and never runs without an API key", async ({ page }) => {
+  await login(page);
+  const post = (data: unknown) => page.request.post("/api/admin/auto-judge", { headers: { Origin: "http://localhost:3100" }, data });
+  expect((await post({})).status()).toBe(400);
+  const r = await post({ slot: 1 });
+  expect(r.status()).toBe(400);
+  expect(JSON.stringify(await r.json())).toMatch(/ANTHROPIC_API_KEY/);
 });
 
 test("keyboard calibration: ↑ ↓ X Esc Enter ← U behave exactly as specified (acceptance 2, 3)", async ({ page }) => {

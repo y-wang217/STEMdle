@@ -51,12 +51,35 @@ export async function recordJudgment(args: {
   questionId: string;
   judgment: Judgment | "retracted";
   note?: string | null;
-}): Promise<{ status: string; judgment: Judgment | null; recorded: boolean }> {
+  /**
+   * Record a difficulty judgment on a question that is already in a published
+   * challenge (calibration from real play). Status is never changed for published
+   * questions (recomputeStatus returns early); 'invalid' and 'retracted' are refused.
+   */
+  allowPublished?: boolean;
+  /**
+   * Checked inside the transaction after the question row is locked. A non-null
+   * return is a reason to record nothing (e.g. an automated judge whose evidence
+   * went stale because a human judged or edited the question meanwhile).
+   */
+  precondition?: (tx: Tx, q: { id: string; current_version_id: string; status: string; judgment: Judgment | null; latestAdminId: string | null }) => Promise<string | null>;
+}): Promise<{ status: string; judgment: Judgment | null; recorded: boolean; skipped?: string }> {
   return sql.begin(async (tx) => {
-    const [q] = await tx<{ id: string; current_version_id: string; generator_version_id: string | null }[]>`
-      select id, current_version_id, generator_version_id from questions where id = ${args.questionId} for update`;
+    const [q] = await tx<{ id: string; current_version_id: string; generator_version_id: string | null; status: string }[]>`
+      select id, current_version_id, generator_version_id, status from questions where id = ${args.questionId} for update`;
     if (!q) throw new HttpError(404, "question not found");
-    if (await isPublished(tx, q.id)) throw new HttpError(409, "question is part of a published challenge; use invalidation instead");
+    if (args.precondition) {
+      const [latest] = await tx<{ admin_id: string }[]>`
+        select admin_id from question_feedback where question_id = ${q.id} order by created_at desc, id desc limit 1`;
+      const judgment = await effectiveJudgment(tx, q.id);
+      const reason = await args.precondition(tx, { ...q, judgment, latestAdminId: latest?.admin_id ?? null });
+      if (reason) return { status: q.status, judgment, recorded: false, skipped: reason };
+    }
+    if (await isPublished(tx, q.id)) {
+      const difficultyOnly = args.judgment === "too_easy" || args.judgment === "just_right" || args.judgment === "too_hard";
+      if (!args.allowPublished || !difficultyOnly)
+        throw new HttpError(409, "question is part of a published challenge; use invalidation instead");
+    }
     const current = await effectiveJudgment(tx, q.id);
     const note = args.note?.trim() ? args.note.trim().slice(0, 2000) : null;
     const target = args.judgment === "retracted" ? null : args.judgment;

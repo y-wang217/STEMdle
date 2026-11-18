@@ -67,3 +67,25 @@ export interface GeneratorProvider {
   /** AI-assisted analysis of feedback → proposed profile edits. */
   proposeProfile?(input: LearningInput): Promise<ProfileProposal>;
 }
+
+/** A blind-solve request: statement and options only, never the key or solution. */
+export interface SolverQuestion {
+  statement: string;
+  options: string[];
+}
+
+export interface SolverAnswer extends BlindSolveResult {
+  /** Actual cost of this call in USD. */
+  costUsd: number;
+  /** Model that served the call. */
+  model: string;
+}
+
+/** One rung of the auto-judge ladder. Implemented for Anthropic models; other providers plug in here. */
+export interface Solver {
+  label: string;
+  /** Upper bound on the cost of one solve of `q`, used to enforce the per-run cap before calling. */
+  worstCaseCostUsd(q: SolverQuestion): number;
+  /** Must stop (reject) promptly when `signal` aborts; the judge also stops waiting on its own. */
+  solve(q: SolverQuestion, signal?: AbortSignal): Promise<SolverAnswer>;
+}
