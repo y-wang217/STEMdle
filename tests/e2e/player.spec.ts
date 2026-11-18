@@ -17,6 +17,13 @@ test.describe("daily challenge on a phone", () => {
 
     for (const slot of [1, 2, 3, 4]) {
       await expect(page.getByTestId("progress")).toHaveText(`${slot} / 8`);
+      // Rising difficulty is visible: a named chip and a ladder with the current bar.
+      if (slot === 1) await expect(page.getByTestId("difficulty")).toHaveText("Easy");
+      if (slot === 4) await expect(page.getByTestId("difficulty")).toHaveText("Medium");
+      const bars = page.getByTestId("ladder").locator("[data-bar]");
+      await expect(bars).toHaveCount(8);
+      await expect(bars.nth(slot - 1)).toHaveAttribute("data-bar", "current");
+      if (slot > 1) await expect(bars.nth(slot - 2)).toHaveAttribute("data-bar", "done");
       // No visible stopwatch/countdown anywhere during play.
       expect(await page.locator("body").innerText()).not.toMatch(TIMER_PATTERN);
       if (slot === 3) {
@@ -28,10 +35,20 @@ test.describe("daily challenge on a phone", () => {
         await page.screenshot({ path: "screenshots/tmp/play-graph.png" });
         expect(await page.locator(".jxgbox svg path").count()).toBeGreaterThan(0);
       }
-      await page.getByTestId(`option-${await correctLabel(slot)}`).click();
+      const right = page.getByTestId(`option-${await correctLabel(slot)}`);
+      await right.click();
+      if (slot === 1) {
+        await expect(right).toHaveAttribute("data-state", "correct");
+        await expect(page.getByTestId("feedback")).toHaveText(/Correct/);
+      }
     }
     await expect(page.getByTestId("progress")).toHaveText("5 / 8");
-    await page.getByTestId(`option-${await wrongLabel(5)}`).click();
+    const wrong = page.getByTestId(`option-${await wrongLabel(5)}`);
+    await wrong.click();
+    await expect(wrong).toHaveAttribute("data-state", "wrong");
+    await expect(page.getByTestId("feedback")).toHaveText(/Not quite/);
+    // The client never marks another option correct during play.
+    await expect(page.getByTestId("question").locator('[data-state="correct"]')).toHaveCount(0);
 
     await expect(page.getByTestId("results")).toBeVisible();
     await expect(page.getByTestId("score")).toContainText("4");
@@ -39,6 +56,10 @@ test.describe("daily challenge on a phone", () => {
     for (let s = 1; s <= 8; s++) await expect(page.getByTestId(`solution-${s}`)).toBeVisible();
     await expect(page.getByTestId("solution-8")).toContainText("Practice · unranked");
     await page.screenshot({ path: "screenshots/tmp/results-mobile.png", fullPage: false });
+    const card = page.getByTestId("share-card");
+    await expect(card).toContainText("4/8");
+    await expect(card).toContainText("🟩🟩🟩🟩🟥⬛⬛⬛");
+    await expect(page.getByTestId("time")).toBeVisible();
 
     await page.getByTestId("share").click();
     const shared = await page.evaluate(() => navigator.clipboard.readText().catch(() => ""));
@@ -50,6 +71,19 @@ test.describe("daily challenge on a phone", () => {
     // Reloading keeps the finished state: one scored attempt per identity.
     await page.reload();
     await expect(page.getByTestId("results")).toBeVisible();
+  });
+
+  test("polished start screen shows a rising difficulty ladder", async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const page = await ctx.newPage();
+    await page.goto("/");
+    const bars = page.getByTestId("ladder").locator("[data-bar]");
+    await expect(bars).toHaveCount(8);
+    const heights = await bars.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+    for (let i = 1; i < 8; i++) expect(heights[i]).toBeGreaterThanOrEqual(heights[i - 1]);
+    expect(heights[7]).toBeGreaterThan(heights[0]);
+    await expect(page.getByTestId("play")).toBeVisible();
+    await ctx.close();
   });
 
   test("skip ends the scored run and opens unranked practice (acceptance 10)", async ({ browser }) => {
