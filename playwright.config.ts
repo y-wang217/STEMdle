@@ -12,7 +12,7 @@ export default defineConfig({
   globalSetup: "./tests/e2e/global-setup.ts",
   use: { baseURL: `http://localhost:${PORT}`, trace: "off" },
   projects: [
-    { name: "mobile", use: { ...devices["iPhone 13"], browserName: "chromium" }, testMatch: /player\.spec\.ts/ },
+    { name: "mobile", use: { ...devices["iPhone 13"], browserName: "chromium" }, testMatch: /(player|practice)\.spec\.ts/ },
     { name: "small-mobile", use: { viewport: { width: 360, height: 640 }, isMobile: true, hasTouch: true, browserName: "chromium" }, testMatch: /layout\.spec\.ts/ },
     { name: "desktop", use: { viewport: { width: 1280, height: 900 }, browserName: "chromium" }, testMatch: /admin\.spec\.ts/ },
   ],

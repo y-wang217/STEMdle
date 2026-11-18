@@ -108,6 +108,23 @@ async function main() {
   const today = torontoDate();
   await autoCompose(today, admin.id);
   await approveChallenge(today, admin.id);
+  // Practice pool: approved questions in slots 1 and 2 that are not in any scheduled set.
+  for (const slot of [1, 2]) {
+    for (let made = 0; made < 3; ) {
+      const tpl = bucket1Templates[(slot + seed) % bucket1Templates.length];
+      let candidate;
+      try {
+        candidate = tpl.generate(new Rng(seed++), 2) as never;
+      } catch {
+        continue;
+      }
+      const { questionId, versionId } = await sql.begin((tx) => insertQuestion(tx, { slot, batchId: null, generatorVersionId: null, source: "seed", candidate, meta: { e2e: "practice" } }));
+      const [v] = await validateVersions([versionId]);
+      if (v.status !== "passed") continue;
+      await recordJudgment({ adminId: admin.id, questionId, judgment: "just_right" });
+      made++;
+    }
+  }
   await runGenerationBatch({ slot: 1, count: 6, providerId: "procedural", adminId: admin.id, seed: 2026 });
   await sql.end();
   console.log("e2e database ready");

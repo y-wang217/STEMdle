@@ -16,3 +16,11 @@ export async function wrongLabel(slot: number): Promise<string> {
   const c = await correctLabel(slot);
   return ["A", "B", "C", "D"].find((l) => l !== c)!;
 }
+
+/** Correct option label for a served practice question. */
+export async function practiceCorrectLabel(attemptId: string): Promise<string> {
+  const [r] = await db<{ label: string }[]>`
+    select o.label from practice_attempts a join question_options o on o.question_version_id = a.question_version_id
+    where a.id = ${attemptId} and o.is_correct`;
+  return r.label;
+}
