@@ -2,6 +2,7 @@
 import { Tex } from "@/components/Tex";
 import { Diagram } from "@/components/Diagram";
 import type { DiagramSpecT } from "@/lib/schemas/question";
+import { Icon } from "./ui";
 
 export interface ViewOption {
   id: string;
@@ -10,6 +11,22 @@ export interface ViewOption {
 }
 
 export type OptionMark = "correct" | "wrong" | "dim" | "picked" | null;
+
+const tone: Record<string, string> = {
+  correct: "border-good bg-good-soft animate-pop",
+  wrong: "border-bad bg-bad-soft animate-shake",
+  picked: "border-accent bg-card animate-pending",
+  dim: "border-rule bg-card opacity-55",
+  idle: "border-rule bg-card enabled:hover:border-ink-2 enabled:active:scale-[0.985] enabled:active:bg-paper-2",
+};
+
+const badge: Record<string, string> = {
+  correct: "border-good bg-good text-white",
+  wrong: "border-bad bg-bad text-white",
+  picked: "border-accent bg-accent text-accent-ink",
+  dim: "border-rule text-muted",
+  idle: "border-rule bg-paper-2/60 text-ink-2 group-enabled:group-hover:border-ink-2",
+};
 
 export function QuestionView({
   statement,
@@ -28,39 +45,33 @@ export function QuestionView({
 }) {
   return (
     <div className="animate-rise">
-      <Tex as="div" className="prose-math text-[1.12rem] leading-relaxed text-ink sm:text-xl" >{statement}</Tex>
-      {diagram && <Diagram spec={diagram} className="mt-4 rounded-2xl border border-rule bg-card/70 p-2" />}
-      <div className="mt-5 grid gap-3 sm:grid-cols-2" role="group" aria-label="Answer choices">
+      <Tex as="div" className="prose-math text-[1.15rem] leading-[1.6] text-ink sm:text-xl">
+        {statement}
+      </Tex>
+      {diagram && <Diagram spec={diagram} className="mt-4 overflow-hidden rounded-2xl border border-rule bg-card/80 p-2 shadow-[0_1px_0_rgba(0,0,0,0.03)]" />}
+      <div className="mt-5 grid gap-2.5 sm:grid-cols-2 sm:gap-3" role="group" aria-label="Answer choices">
         {options.map((o) => {
-          const m = marks[o.id] ?? null;
-          const tone =
-            m === "correct"
-              ? "border-good bg-good-soft animate-pop"
-              : m === "wrong"
-                ? "border-bad bg-bad-soft animate-pop"
-                : m === "picked"
-                  ? "border-accent bg-card"
-                  : m === "dim"
-                    ? "border-rule bg-card opacity-55"
-                    : "border-rule bg-card hover:border-ink-2 active:scale-[0.99]";
+          const state = marks[o.id] ?? "idle";
           return (
             <button
               key={o.id}
               type="button"
               data-testid={`option-${o.label}`}
+              data-state={state}
+              aria-pressed={state === "picked" || state === "correct" || state === "wrong" ? true : undefined}
               disabled={disabled}
               onClick={() => onPick?.(o.id)}
-              className={`group flex min-h-16 w-full items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition ${tone} disabled:cursor-default focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent`}
+              className={`group flex min-h-16 w-full min-w-0 items-center gap-3.5 rounded-2xl border-2 px-3.5 py-3 text-left transition duration-150 ${tone[state]} disabled:cursor-default focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent`}
             >
               <span
-                className={`flex h-8 w-8 flex-none items-center justify-center rounded-full border text-sm font-bold ${
-                  m === "correct" ? "border-good bg-good text-white" : m === "wrong" ? "border-bad bg-bad text-white" : "border-rule text-ink-2"
-                }`}
+                className={`flex h-9 w-9 flex-none items-center justify-center rounded-full border text-sm font-bold transition-colors ${badge[state]}`}
                 aria-hidden
               >
-                {o.label}
+                {state === "correct" ? <Icon name="check" /> : state === "wrong" ? <Icon name="cross" /> : o.label}
               </span>
-              <Tex className="text-lg text-ink">{o.tex}</Tex>
+              <span className="sr-only">{o.label}.</span>
+              <Tex className="math-scroll flex-1 py-1 text-lg text-ink">{o.tex}</Tex>
+              {(state === "correct" || state === "wrong") && <span className="sr-only">{state === "correct" ? " (correct)" : " (wrong)"}</span>}
             </button>
           );
         })}
