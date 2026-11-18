@@ -10,11 +10,13 @@ import { DEFAULT_COST_CAP_USD, autoJudge } from "@/lib/factory/auto-judge";
 export const maxDuration = 300;
 
 /**
- * No new solver call starts after this. The slowest rung (Opus at high effort, up
- * to 32k output tokens) can take a couple of minutes, so leave that much headroom
- * before maxDuration. Questions not reached stay `ready` for the next run.
+ * No new solver call starts after RUN_DEADLINE_MS. Calls still running at
+ * RUN_HARD_DEADLINE_MS are aborted (the HTTP request is cancelled), leaving
+ * 30 s before maxDuration to write results and the `auto_judge_run` audit row.
+ * Questions not finished stay `ready` for the next run.
  */
 const RUN_DEADLINE_MS = 150_000;
+const RUN_HARD_DEADLINE_MS = maxDuration * 1000 - 30_000;
 
 /** Highest per-run cost cap an admin can request from the browser. */
 const MAX_COST_CAP_USD = 20;
@@ -40,7 +42,7 @@ export const POST = adminRoute(async (req, admin) => {
   const costCapUsd = Math.min(MAX_COST_CAP_USD, body.costCapUsd ?? Number(process.env.AUTO_JUDGE_COST_CAP_USD ?? DEFAULT_COST_CAP_USD));
   after(async () => {
     // autoJudge writes its `auto_judge_run` audit row in a finally block, so a failed run is recorded too.
-    await autoJudge({ batchId: body.batchId, slot: body.slot, limit: body.limit, costCapUsd, triggeredBy: admin.id, deadlineMs: RUN_DEADLINE_MS }).catch((e) =>
+    await autoJudge({ batchId: body.batchId, slot: body.slot, limit: body.limit, costCapUsd, triggeredBy: admin.id, deadlineMs: RUN_DEADLINE_MS, hardDeadlineMs: RUN_HARD_DEADLINE_MS }).catch((e) =>
       console.error("[mathdle] auto-judge", (e as Error).message),
     );
   });

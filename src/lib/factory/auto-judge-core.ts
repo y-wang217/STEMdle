@@ -159,7 +159,12 @@ export async function runLadder(
   correctIndex: number,
   solvers: Solver[],
   budget: Budget,
-  opts: { deadline?: number } = {},
+  opts: {
+    /** Epoch ms after which no new rung starts. */
+    deadline?: number;
+    /** Epoch ms at which an in-flight call is aborted (must leave room to write results before the platform kills the function). */
+    hardDeadline?: number;
+  } = {},
 ): Promise<LadderRun> {
   const attempts: LadderAttempt[] = [];
   for (let i = 0; i < solvers.length; i++) {
@@ -168,24 +173,56 @@ export async function runLadder(
     if (opts.deadline !== undefined && Date.now() >= opts.deadline) return { attempts, stopped: "deadline" };
     const worst = solver.worstCaseCostUsd(q);
     if (!budget.tryReserve(worst)) return { attempts, stopped: "cost_cap" };
+    let r: Awaited<ReturnType<Solver["solve"]>>;
     try {
-      const r = await solver.solve(q);
-      budget.settle(worst, r.costUsd);
-      attempts.push({
-        rung: i + 1,
-        label: solver.label,
-        choice: r.choice,
-        correct: r.choice === correctIndex,
-        confidence: r.confidence,
-        concerns: r.concerns,
-        costUsd: r.costUsd,
-      });
-      if (r.choice === correctIndex) break;
+      r = await solveWithin(solver, q, opts.hardDeadline);
     } catch (e) {
-      // A failed call may still have been billed; count the reservation as spent.
+      // A failed or aborted call may still have been billed; count the reservation as spent.
       budget.settle(worst, worst);
+      if (e instanceof HardDeadline) return { attempts, stopped: "deadline" };
       return { attempts, error: `${solver.label}: ${(e as Error).message}` };
     }
+    budget.settle(worst, r.costUsd);
+    attempts.push({
+      rung: i + 1,
+      label: solver.label,
+      choice: r.choice,
+      correct: r.choice === correctIndex,
+      confidence: r.confidence,
+      concerns: r.concerns,
+      costUsd: r.costUsd,
+    });
+    if (r.choice === correctIndex) break;
   }
   return { attempts };
+}
+
+class HardDeadline extends Error {
+  constructor() {
+    super("run hard deadline reached; call aborted");
+  }
+}
+
+/**
+ * Run one solve, aborting it at `hardDeadline`. The abort is passed to the solver
+ * (which cancels the HTTP request) and the wait is also cut off here, so a solver
+ * that ignores the signal cannot hold the run past the deadline.
+ */
+async function solveWithin(solver: Solver, q: SolverQuestion, hardDeadline?: number) {
+  if (hardDeadline === undefined) return solver.solve(q);
+  const remaining = hardDeadline - Date.now();
+  if (remaining <= 0) throw new HardDeadline();
+  const ac = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      ac.abort();
+      reject(new HardDeadline());
+    }, remaining);
+  });
+  try {
+    return await Promise.race([solver.solve(q, ac.signal), expired]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

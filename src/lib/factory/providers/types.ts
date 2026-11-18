@@ -86,5 +86,6 @@ export interface Solver {
   label: string;
   /** Upper bound on the cost of one solve of `q`, used to enforce the per-run cap before calling. */
   worstCaseCostUsd(q: SolverQuestion): number;
-  solve(q: SolverQuestion): Promise<SolverAnswer>;
+  /** Must stop (reject) promptly when `signal` aborts; the judge also stops waiting on its own. */
+  solve(q: SolverQuestion, signal?: AbortSignal): Promise<SolverAnswer>;
 }

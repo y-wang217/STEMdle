@@ -46,9 +46,10 @@ export function anthropicSolver(rung: SolverRungT): Solver {
   if (!SOLVER_PRICES[rung.model]) throw new Error(`no price for solver model ${rung.model}; add it to SOLVER_PRICES`);
   return {
     label: `${rung.model}:${rung.effort}`,
+    // No cache_control is sent, so no cache-write premium can apply to these prompts.
     worstCaseCostUsd: (q) => costUsd(rung.model, estimateInputTokens(q), rung.max_tokens),
-    async solve(q) {
-      const r = await blindSolveOn(rung.model, rung.effort, rung.max_tokens, q);
+    async solve(q, signal) {
+      const r = await blindSolveOn(rung.model, rung.effort, rung.max_tokens, q, signal);
       const cost = costUsd(rung.model, num(r.usage.input_tokens), num(r.usage.output_tokens), {
         write: num(r.usage.cache_creation_input_tokens),
         read: num(r.usage.cache_read_input_tokens),

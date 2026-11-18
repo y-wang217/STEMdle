@@ -45,6 +45,8 @@ export async function structured<T extends z.ZodType>(opts: {
   maxTokens: number;
   /** Server-side refusal fallbacks (default on). Off for blind-solve ladders, where the model identity matters. */
   fallbacks?: boolean;
+  /** Aborts the HTTP request (and any SDK retries) when signalled. */
+  signal?: AbortSignal;
 }): Promise<{ data: z.infer<T>; usage: Record<string, unknown>; model: string }> {
   const stream = getClient().beta.messages.stream({
     model: opts.model,
@@ -54,7 +56,7 @@ export async function structured<T extends z.ZodType>(opts: {
     output_config: { effort: opts.effort, format: betaZodOutputFormat(opts.schema) },
     system: opts.system,
     messages: [{ role: "user", content: opts.user }],
-  });
+  }, opts.signal ? { signal: opts.signal } : undefined);
   const msg = await stream.finalMessage();
   if (msg.stop_reason === "refusal") throw new Error("the model declined this request (refusal)");
   if (msg.stop_reason === "max_tokens") throw new Error("generation hit max_tokens; request fewer questions per batch");
@@ -75,6 +77,7 @@ export async function blindSolveOn(
   effort: "low" | "medium" | "high" | "xhigh",
   maxTokens: number,
   q: { statement: string; options: string[] },
+  signal?: AbortSignal,
 ): Promise<BlindSolveResult & { usage: Record<string, unknown>; model: string }> {
   const { data, usage, model: served } = await structured({
     model,
@@ -84,6 +87,7 @@ export async function blindSolveOn(
     effort,
     maxTokens,
     fallbacks: false,
+    signal,
   });
   return { choice: "ABCD".indexOf(data.choice), confidence: data.confidence, concerns: data.concerns, usage, model: served };
 }

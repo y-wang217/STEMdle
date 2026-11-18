@@ -185,6 +185,56 @@ describe("auto-judge (stubbed solvers)", () => {
     expect(a.details).toMatchObject({ stopped: "deadline", unjudged: 1, spentUsd: 0, error: null });
   });
 
+  it("aborts a hung solver call at the hard deadline and still writes the audit row", async () => {
+    // The same slot-1 question is still ready.
+    const hanging: SolverFactory = (rung) => ({ label: rung.model, worstCaseCostUsd: () => 0.01, solve: () => new Promise(() => {}) });
+    const report = await autoJudge({ slot: 1, solverFactory: hanging, costCapUsd: 1, deadlineMs: 60_000, hardDeadlineMs: 200, triggeredBy: adminId });
+    expect(report.stopped).toBe("deadline");
+    expect(report.counts.unjudged).toBe(1);
+    const [a] = await sql<{ details: Record<string, unknown> }[]>`
+      select details from audit_log where action = 'auto_judge_run' order by created_at desc limit 1`;
+    expect(a.details).toMatchObject({ stopped: "deadline", unjudged: 1, error: null });
+    expect(a.details.spentUsd).toBeCloseTo(0.01);
+    const [{ status }] = await sql<{ status: string }[]>`select status from questions where id = ${report.items[0].questionId}`;
+    expect(status).toBe("ready");
+  });
+
+  it("records nothing for a question edited to a new version during the run", async () => {
+    const s = await runGenerationBatch({ slot: 1, count: 1, providerId: "procedural", adminId, seed: 5150 });
+    const key = await answerKey(s.batchId);
+    const inner = scriptedFactory(key, new Map(), []);
+    let edited = false;
+    const factory: SolverFactory = (rung, index) => {
+      const solver = inner(rung, index);
+      return {
+        ...solver,
+        async solve(q) {
+          if (!edited) {
+            edited = true;
+            // An editor saves a new version (copy of v1) while the solve is in flight.
+            await sql.begin(async (tx) => {
+              const [v] = await tx<{ id: string }[]>`
+                insert into question_versions (question_id, version, statement, solution, key_insight, tags, techniques,
+                  estimated_difficulty, estimated_solve_seconds, verification, diagram, generation_meta)
+                select question_id, 2, statement, solution, key_insight, tags, techniques,
+                  estimated_difficulty, estimated_solve_seconds, verification, diagram, generation_meta
+                from question_versions where question_id = ${key[0].id} and version = 1
+                returning id`;
+              await tx`update questions set current_version_id = ${v.id} where id = ${key[0].id}`;
+            });
+          }
+          return solver.solve(q);
+        },
+      };
+    };
+    const report = await autoJudge({ batchId: s.batchId, solverFactory: factory, costCapUsd: 1 });
+    expect(report.items).toHaveLength(1);
+    expect(report.items[0]).toMatchObject({ outcome: "skipped" });
+    expect(report.items[0].detail).toMatch(/edited during the run/);
+    const [{ n }] = await sql<{ n: number }[]>`select count(*)::int as n from question_feedback where question_id = ${key[0].id}`;
+    expect(n).toBe(0);
+  });
+
   it("player solve rate overrides a ladder judgment once there are enough plays", async () => {
     const { autoCompose, approveChallenge, activateDate } = await import("@/lib/composer");
     const { torontoDate } = await import("@/lib/time");

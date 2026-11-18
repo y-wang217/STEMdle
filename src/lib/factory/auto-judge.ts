@@ -40,6 +40,8 @@ export interface AutoJudgeArgs {
   triggeredBy?: string | null;
   /** Milliseconds from now after which no new solver call starts (serverless time limit). */
   deadlineMs?: number;
+  /** Milliseconds from now at which in-flight solver calls are aborted, so results and the audit row are written in time. */
+  hardDeadlineMs?: number;
 }
 
 export interface AutoJudgeItem {
@@ -198,6 +200,7 @@ export async function autoJudge(args: AutoJudgeArgs): Promise<AutoJudgeReport> {
   const capUsd = args.costCapUsd ?? Number(process.env.AUTO_JUDGE_COST_CAP_USD ?? DEFAULT_COST_CAP_USD);
   if (!(capUsd >= 0)) throw new HttpError(400, "cost cap must be a non-negative number");
   const deadline = args.deadlineMs !== undefined ? Date.now() + args.deadlineMs : undefined;
+  const hardDeadline = args.hardDeadlineMs !== undefined ? Date.now() + args.hardDeadlineMs : undefined;
   const factory = args.solverFactory ?? defaultSolverFactory;
   const budget = new Budget(capUsd);
   const items: AutoJudgeItem[] = [];
@@ -245,7 +248,7 @@ export async function autoJudge(args: AutoJudgeArgs): Promise<AutoJudgeReport> {
         return { ...base, outcome: "skipped", detail: `solver unavailable: ${(e as Error).message}`, costUsd: 0 };
       }
       const correct = q.options.findIndex((o) => o.is_correct);
-      const run = await runLadder({ statement: q.statement, options: q.options.map((o) => o.tex) }, correct, solvers, budget, { deadline });
+      const run = await runLadder({ statement: q.statement, options: q.options.map((o) => o.tex) }, correct, solvers, budget, { deadline, hardDeadline });
       const cost = run.attempts.reduce((a, b) => a + b.costUsd, 0);
       if (run.stopped) {
         stopped ??= run.stopped;

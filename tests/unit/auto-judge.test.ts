@@ -131,6 +131,27 @@ describe("runLadder", () => {
     expect(r.stopped).toBe("deadline");
   });
 
+  it("aborts an in-flight call at the hard deadline, even if the solver ignores the signal", async () => {
+    let received: AbortSignal | undefined;
+    const hanging: Solver = {
+      label: "opus-high",
+      worstCaseCostUsd: () => 0.5,
+      solve: (_q, signal) => {
+        received = signal;
+        return new Promise(() => {}); // never settles
+      },
+    };
+    const budget = new Budget(1);
+    const started = Date.now();
+    const r = await runLadder(Q, CORRECT, [hanging], budget, { hardDeadline: Date.now() + 50 });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(r.stopped).toBe("deadline");
+    expect(r.attempts).toEqual([]);
+    expect(received?.aborted).toBe(true);
+    // The aborted call may have been billed: its reservation counts as spent.
+    expect(budget.spentUsd).toBeCloseTo(0.5);
+  });
+
   it("Budget never lets reservations exceed the cap", () => {
     const b = new Budget(1);
     expect(b.tryReserve(0.6)).toBe(true);
