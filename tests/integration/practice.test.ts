@@ -238,3 +238,32 @@ describe("default slot (AC1)", () => {
     expect(s.question?.slot).toBe(2);
   });
 });
+
+describe("rate limits (AC7)", () => {
+  it("start allows 30/min per IP key and play allows 60/min per player, then 429", async () => {
+    const { PRACTICE_LIMITS, enforcePracticeLimit } = await import("@/lib/game/practice");
+    expect(PRACTICE_LIMITS.start).toMatchObject({ prefix: "practice-start", limit: 30, windowSeconds: 60 });
+    expect(PRACTICE_LIMITS.play).toMatchObject({ prefix: "practice", limit: 60, windowSeconds: 60 });
+    // Pin the start of a fresh 60 s window so the loop cannot straddle two windows.
+    const msLeft = 60_000 - (Date.now() % 60_000);
+    if (msLeft < 5_000) await new Promise((r) => setTimeout(r, msLeft + 50));
+    for (const [kind, n] of [["start", 30], ["play", 60]] as const) {
+      const subject = `rl-${kind}-${Math.random()}`;
+      for (let i = 0; i < n; i++) await enforcePracticeLimit(kind, subject);
+      await expect(enforcePracticeLimit(kind, subject)).rejects.toMatchObject({ status: 429, code: "rate_limited" });
+      // Another subject has its own budget.
+      await expect(enforcePracticeLimit(kind, `${subject}-other`)).resolves.toBeUndefined();
+    }
+  });
+
+  it("every practice route applies its limiter before doing any work", async () => {
+    const { readFileSync } = await import("node:fs");
+    const expected = { start: `enforcePracticeLimit("start", ipKey(req))`, next: `enforcePracticeLimit("play", player.id)`, answer: `enforcePracticeLimit("play", player.id)` };
+    for (const [name, call] of Object.entries(expected)) {
+      const src = readFileSync(`src/app/api/practice/${name}/route.ts`, "utf8");
+      expect(src, name).toContain(`await ${call};`);
+      const work = /startPractice\(|nextPracticeQuestion\(|answerPractice\(|getOrCreatePlayer\(/.exec(src.slice(src.indexOf("export const POST")))!;
+      expect(src.indexOf(call), `${name}: limiter runs before ${work[0]}`).toBeLessThan(src.indexOf("export const POST") + work.index);
+    }
+  });
+});

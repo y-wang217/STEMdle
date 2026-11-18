@@ -14,8 +14,21 @@
  */
 import { sql, type Tx } from "@/lib/db";
 import { HttpError } from "@/lib/http";
+import { enforceRateLimit } from "@/lib/ratelimit";
 import { torontoDate } from "@/lib/time";
 import type { DiagramSpecT } from "@/lib/schemas/question";
+
+/** Per-window limits for the practice API (requests per 60 s), like the game APIs. */
+export const PRACTICE_LIMITS = {
+  start: { prefix: "practice-start", limit: 30, windowSeconds: 60 }, // keyed by IP hash: it can create players
+  play: { prefix: "practice", limit: 60, windowSeconds: 60 }, // keyed by player: next + answer share one budget
+} as const;
+
+/** Throws HttpError 429 when `subject` (IP key or player id) exceeds the limit for `kind`. */
+export async function enforcePracticeLimit(kind: keyof typeof PRACTICE_LIMITS, subject: string) {
+  const l = PRACTICE_LIMITS[kind];
+  await enforceRateLimit(`${l.prefix}:${subject}`, l.limit, l.windowSeconds);
+}
 
 export interface PracticeQuestion {
   attemptId: string;

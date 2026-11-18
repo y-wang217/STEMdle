@@ -72,7 +72,27 @@ test.describe("practice mode on a phone", () => {
     await expect(page.getByTestId("topic")).toHaveValue("2");
   });
 
-  test("API rejects cross-origin posts and foreign sessions (AC6, AC7)", async ({ page, context }) => {
+  test("another player's real session is invisible: 404 on next and answer (AC6)", async ({ browser, baseURL }) => {
+    const headers = { Origin: baseURL! };
+    const a = await browser.newContext();
+    const b = await browser.newContext();
+    // Each context's request client carries that context's own player cookie.
+    const started = await a.request.post("/api/practice/start", { headers, data: { slot: 2 } });
+    expect(started.status()).toBe(200);
+    const { session, question } = await started.json();
+    expect((await b.request.post("/api/practice/start", { headers, data: { slot: 1 } })).status()).toBe(200);
+    const body = { sessionId: session.id, attemptId: question.attemptId, optionId: question.options[0].id };
+    const next = await b.request.post("/api/practice/next", { headers, data: { sessionId: session.id } });
+    const answer = await b.request.post("/api/practice/answer", { headers, data: body });
+    expect([next.status(), answer.status()]).toEqual([404, 404]);
+    expect(await answer.text()).not.toContain("solution");
+    // A's attempt was not consumed by B: A can still answer it.
+    expect((await a.request.post("/api/practice/answer", { headers, data: body })).status()).toBe(200);
+    await a.close();
+    await b.close();
+  });
+
+  test("API rejects cross-origin posts and nonexistent sessions (AC6, AC7)", async ({ page, context }) => {
     await page.goto("/practice");
     const cross = await context.request.post("/api/practice/start", { headers: { Origin: "https://evil.example" }, data: { slot: 1 } });
     expect(cross.status()).toBe(403);
@@ -82,12 +102,12 @@ test.describe("practice mode on a phone", () => {
       const start = await post("/api/practice/start", { slot: 2 });
       const q = start.b.question;
       const bogus = await post("/api/practice/answer", { sessionId: start.b.session.id, attemptId: q.attemptId, optionId: "00000000-0000-4000-8000-000000000000" });
-      const foreign = await post("/api/practice/next", { sessionId: "00000000-0000-4000-8000-000000000000" });
+      const missing = await post("/api/practice/next", { sessionId: "00000000-0000-4000-8000-000000000000" });
       const ok = await post("/api/practice/answer", { sessionId: start.b.session.id, attemptId: q.attemptId, optionId: q.options[0].id });
       const twice = await post("/api/practice/answer", { sessionId: start.b.session.id, attemptId: q.attemptId, optionId: q.options[1].id });
-      return { bogus: bogus.s, foreign: foreign.s, ok: ok.s, revealed: typeof ok.b.solution === "string", twice: twice.s };
+      return { bogus: bogus.s, missing: missing.s, ok: ok.s, revealed: typeof ok.b.solution === "string", twice: twice.s };
     });
-    expect(r).toEqual({ bogus: 400, foreign: 404, ok: 200, revealed: true, twice: 409 });
+    expect(r).toEqual({ bogus: 400, missing: 404, ok: 200, revealed: true, twice: 409 });
   });
 
   test("360px phone: no horizontal overflow (AC8)", async ({ browser }) => {
